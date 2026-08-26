@@ -22,7 +22,46 @@ if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
 }
 
-app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:5173', credentials: true }));
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://d-hfrontend.vercel.app',
+];
+
+const envOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [...new Set([...defaultOrigins, ...envOrigins])];
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  // Vercel production + preview deployments for this project
+  try {
+    const { hostname } = new URL(origin);
+    return (
+      hostname === 'd-hfrontend.vercel.app' ||
+      (hostname.endsWith('.vercel.app') && hostname.includes('d-hfrontend')) ||
+      hostname.endsWith('-anasali500s-projects.vercel.app')
+    );
+  } catch {
+    return false;
+  }
+};
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, false);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 

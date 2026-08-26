@@ -19,7 +19,11 @@ const sendResetEmail = async (email, resetToken) => {
     return;
   }
 
-  const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
+  const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .find(Boolean);
+  const resetUrl = `${frontendBase}/reset-password/${resetToken}`;
 
   await transporter.sendMail({
     from: process.env.EMAIL_USER,
