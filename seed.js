@@ -9,7 +9,7 @@ const seed = async () => {
   try {
     await mongoose.connect(
       process.env.MONGODB_URI ||
-        "mongodb+srv://anasalibotan500_db_user:fQ5VBIaMEh4KOzNA@dhambaal.ndqhefs.mongodb.net/?appName=Dhambaal",
+        "mongodb+srv://dhambaal1122:Vxa55Y3YunQ9UiMC@dhambaal.ndqhefs.mongodb.net/?appName=Dhambaal",
     );
     console.log("Connected to MongoDB");
     await ensureFixedCategories();

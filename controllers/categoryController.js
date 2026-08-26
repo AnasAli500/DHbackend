@@ -4,6 +4,10 @@ const ExamStructure = require('../models/ExamStructure');
 const { CATEGORY_DEFINITIONS } = require('../utils/categoryConfig');
 
 const ensureFixedCategories = async () => {
+  // Delete any category in database that is NOT among the 3 allowed categories ('A', 'B', 'C')
+  const validCodes = CATEGORY_DEFINITIONS.map((c) => c.code);
+  await Category.deleteMany({ code: { $nin: validCodes } });
+
   const categories = await Promise.all(CATEGORY_DEFINITIONS.map((category) => Category.findOneAndUpdate(
     { code: category.code },
     { $set: category },
