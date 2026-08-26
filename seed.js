@@ -8,8 +8,7 @@ const { ensureFixedCategories } = require("./controllers/categoryController");
 const seed = async () => {
   try {
     await mongoose.connect(
-      process.env.MONGODB_URI ||
-        "mongodb+srv://anasalibotan500_db_user:66Vz2IgZktjnn8AL@dhambaal.ndqhefs.mongodb.net/?appName=Dhambaal",
+      process.env.MONGODB_URI || "mongodb://localhost:27017/school_management",
     );
     console.log("Connected to MongoDB");
     await ensureFixedCategories();
