@@ -19,7 +19,7 @@ const sendResetEmail = async (email, resetToken) => {
     return;
   }
 
-  const frontendBase = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  const frontendBase = (process.env.FRONTEND_URL || 'https://www.dhambaalschool.com')
     .split(',')
     .map((origin) => origin.trim())
     .find(Boolean);

@@ -26,6 +26,8 @@ const defaultOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'https://d-hfrontend.vercel.app',
+  'https://www.dhambaalschool.com',
+  'https://dhambaalschool.com',
 ];
 
 const envOrigins = (process.env.FRONTEND_URL || '')
@@ -38,10 +40,13 @@ const allowedOrigins = [...new Set([...defaultOrigins, ...envOrigins])];
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
   if (allowedOrigins.includes(origin)) return true;
-  // Vercel production + preview deployments for this project
+  // Custom domain + Vercel production/preview deployments
   try {
     const { hostname } = new URL(origin);
     return (
+      hostname === 'dhambaalschool.com' ||
+      hostname === 'www.dhambaalschool.com' ||
+      hostname.endsWith('.dhambaalschool.com') ||
       hostname === 'd-hfrontend.vercel.app' ||
       (hostname.endsWith('.vercel.app') && hostname.includes('d-hfrontend')) ||
       hostname.endsWith('-anasali500s-projects.vercel.app')
