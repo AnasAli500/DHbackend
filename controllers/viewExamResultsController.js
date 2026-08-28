@@ -932,6 +932,30 @@ exports.getPublicStudentResult = async (req, res) => {
 
     const latestProcessed = publishedProcessed[0] || null;
 
+    // Calculate Class Rank & Class Students count
+    const effectiveClassId = student.classId?._id || student.classId;
+    const totalClassStudents = effectiveClassId ? await Student.countDocuments({ classId: effectiveClassId }) : 0;
+
+    let classRank = latestProcessed?.position || (latestProcessed?.rank ? getOrdinalPosition(latestProcessed.rank) : null);
+
+    if (!classRank && effectiveClassId) {
+      const allClassProcessed = await ProcessedResult.find({
+        classId: effectiveClassId,
+        status: 'Published',
+      }).sort({ percentage: -1, totalMarksObtained: -1 });
+
+      if (allClassProcessed.length > 0) {
+        const studentIdx = allClassProcessed.findIndex(p => p.studentId.toString() === student._id.toString());
+        if (studentIdx !== -1) {
+          classRank = getOrdinalPosition(studentIdx + 1);
+        }
+      }
+    }
+
+    if (!classRank) {
+      classRank = 'N/A';
+    }
+
     const percentage = latestProcessed
       ? latestProcessed.percentage
       : summaryTotalMaxMarks > 0
@@ -960,7 +984,9 @@ exports.getPublicStudentResult = async (req, res) => {
         pctValue: percentage,
         overallGrade,
         gpa: latestProcessed ? latestProcessed.gpa : 0,
-        rank: latestProcessed?.position || (latestProcessed?.rank ? `#${latestProcessed.rank}` : 'N/A'),
+        rank: classRank,
+        classRank: classRank,
+        totalClassStudents,
         isOverallPassed,
         overallStatus,
         status: isOverallPassed ? 'PASSED' : 'FAILED',
