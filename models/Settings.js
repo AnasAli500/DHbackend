@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const settingsSchema = new mongoose.Schema(
   {
-    schoolName: { type: String, default: 'School Management System' },
+    schoolName: { type: String, default: 'DhambaalSchool' },
     schoolLogo: { type: String },
     schoolAddress: { type: String },
     schoolPhone: { type: String },

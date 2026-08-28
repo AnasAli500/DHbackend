@@ -831,3 +831,146 @@ exports.getStudentExamDetails = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// GET /api/exam-results/public-search
+exports.getPublicStudentResult = async (req, res) => {
+  try {
+    const { rollNumber } = req.query;
+
+    if (!rollNumber || !String(rollNumber).trim()) {
+      return res.status(400).json({ message: 'Roll Number / Student ID is required.' });
+    }
+
+    const cleanId = String(rollNumber).trim();
+
+    // Find student by studentId (case-insensitive regex)
+    let student = await Student.findOne({
+      studentId: { $regex: new RegExp(`^${cleanId}$`, 'i') }
+    }).populate('classId');
+
+    if (!student) {
+      return res.status(404).json({ message: 'Student not found.' });
+    }
+
+    const classObj = await Class.findById(student.classId?._id || student.classId).populate('category');
+
+    // Fetch published processed results
+    const publishedProcessed = await ProcessedResult.find({
+      studentId: student._id,
+      status: 'Published',
+    }).populate('examSeasonId').populate('classId').sort({ updatedAt: -1 });
+
+    // Fetch published individual subject exams
+    const publishedExams = await Exam.find({
+      studentId: student._id,
+      status: 'Published',
+    }).populate('periodId', 'subject periodName').populate('examSeasonId', 'name').sort({ examDate: 1 });
+
+    if (publishedProcessed.length === 0 && publishedExams.length === 0) {
+      return res.status(404).json({ message: 'Result not available.' });
+    }
+
+    // Get school settings
+    const settings = (await Settings.findOne()) || {
+      schoolName: 'School Management System',
+      schoolAddress: '123 Education Street',
+      schoolPhone: '+1 234 567 8900',
+      schoolEmail: 'info@demohighschool.com',
+    };
+
+    // Construct subject breakdown
+    const subjectResultsMap = {};
+    publishedExams.forEach(e => {
+      const subjName = e.periodId ? e.periodId.subject : e.examName || 'N/A';
+      if (!subjectResultsMap[subjName]) {
+        subjectResultsMap[subjName] = {
+          subject: subjName,
+          marksObtained: 0,
+          maxMarks: 0,
+          examBreakdown: [],
+        };
+      }
+      subjectResultsMap[subjName].examBreakdown.push({
+        examType: e.examType,
+        marksObtained: e.marks,
+        maxMarks: e.totalMarks,
+        percentage: `${e.percentage}%`,
+        grade: e.grade,
+        status: e.isPassed ? 'Pass' : 'Fail',
+      });
+      subjectResultsMap[subjName].marksObtained += e.marks;
+      subjectResultsMap[subjName].maxMarks += e.totalMarks;
+    });
+
+    const subjectResultsList = Object.values(subjectResultsMap).map(s => {
+      const pct = s.maxMarks > 0 ? Number(((s.marksObtained / s.maxMarks) * 100).toFixed(1)) : 0;
+      const grade = calculateGrade(pct);
+      const isPassed = pct >= 50;
+      return {
+        subject: s.subject,
+        examBreakdown: s.examBreakdown,
+        marksObtained: s.marksObtained,
+        maxMarks: s.maxMarks,
+        percentage: `${pct}%`,
+        grade,
+        status: isPassed ? 'Pass' : 'Fail',
+      };
+    });
+
+    // Summary calculation
+    let totalMarksObtained = 0;
+    let summaryTotalMaxMarks = 0;
+    let passedCount = 0;
+    let failedCount = 0;
+
+    subjectResultsList.forEach(s => {
+      totalMarksObtained += s.marksObtained;
+      summaryTotalMaxMarks += s.maxMarks;
+      if (s.status === 'Pass') passedCount++;
+      else failedCount++;
+    });
+
+    const latestProcessed = publishedProcessed[0] || null;
+
+    const percentage = latestProcessed
+      ? latestProcessed.percentage
+      : summaryTotalMaxMarks > 0
+        ? Number(((totalMarksObtained / summaryTotalMaxMarks) * 100).toFixed(1))
+        : 0;
+
+    const overallGrade = latestProcessed ? latestProcessed.overallGrade : calculateGrade(percentage);
+
+    res.json({
+      school: settings,
+      studentInfo: {
+        _id: student._id,
+        name: student.name,
+        admissionNumber: student.studentId,
+        className: classObj?.className || 'N/A',
+        gradeLevel: classObj?.gradeLevel || 'N/A',
+        academicYear: classObj?.academicYear || 'N/A',
+        category: classObj?.category?.name || 'N/A',
+      },
+      summary: {
+        totalMarksObtained: latestProcessed ? latestProcessed.totalMarksObtained : totalMarksObtained,
+        totalMaxMarks: latestProcessed ? latestProcessed.totalMaxMarks : summaryTotalMaxMarks,
+        percentage: `${percentage}%`,
+        pctValue: percentage,
+        overallGrade,
+        gpa: latestProcessed ? latestProcessed.gpa : 0,
+        rank: latestProcessed?.position || (latestProcessed?.rank ? `#${latestProcessed.rank}` : 'N/A'),
+        isOverallPassed: latestProcessed ? latestProcessed.isOverallPassed : percentage >= 50,
+        teacherRemarks: latestProcessed?.teacherRemarks || (percentage >= 50 ? 'Good performance.' : 'Needs improvement.'),
+        principalRemarks: latestProcessed?.principalRemarks || (percentage >= 50 ? 'Passed' : 'Requires Retake'),
+        totalSubjects: subjectResultsList.length,
+        passedSubjectsCount: latestProcessed ? latestProcessed.passedSubjectsCount : passedCount,
+        failedSubjectsCount: latestProcessed ? latestProcessed.failedSubjectsCount : failedCount,
+        seasonName: latestProcessed?.examSeasonId?.name || publishedExams[0]?.examSeasonId?.name || 'Exam Season',
+      },
+      subjectResults: subjectResultsList,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+

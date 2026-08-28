@@ -8,10 +8,14 @@ const {
   getExamTypes,
   getClassResults,
   getStudentExamDetails,
+  getPublicStudentResult,
 } = require('../controllers/viewExamResultsController');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Public route (unauthenticated)
+router.get('/public-search', getPublicStudentResult);
 
 router.use(protect);
 
