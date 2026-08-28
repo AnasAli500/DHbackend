@@ -9,7 +9,7 @@ const ExamStructure = require('../models/ExamStructure');
 const ProcessedResult = require('../models/ProcessedResult');
 const Settings = require('../models/Settings');
 const Enrollment = require('../models/Enrollment');
-const { calculateGrade, getOrdinalPosition } = require('../utils/gradeCalculator');
+const { calculateGrade, getOrdinalPosition, isGradePassed } = require('../utils/gradeCalculator');
 
 // Helper to get teacher model for current user
 const getTeacherDoc = async (user) => {
@@ -905,7 +905,7 @@ exports.getPublicStudentResult = async (req, res) => {
     const subjectResultsList = Object.values(subjectResultsMap).map(s => {
       const pct = s.maxMarks > 0 ? Number(((s.marksObtained / s.maxMarks) * 100).toFixed(1)) : 0;
       const grade = calculateGrade(pct);
-      const isPassed = pct >= 50;
+      const isPassed = isGradePassed(grade) || pct >= 50;
       return {
         subject: s.subject,
         examBreakdown: s.examBreakdown,
@@ -939,6 +939,8 @@ exports.getPublicStudentResult = async (req, res) => {
         : 0;
 
     const overallGrade = latestProcessed ? latestProcessed.overallGrade : calculateGrade(percentage);
+    const isOverallPassed = isGradePassed(overallGrade) || percentage >= 50;
+    const overallStatus = isOverallPassed ? 'PASS' : 'FAIL';
 
     res.json({
       school: settings,
@@ -959,9 +961,11 @@ exports.getPublicStudentResult = async (req, res) => {
         overallGrade,
         gpa: latestProcessed ? latestProcessed.gpa : 0,
         rank: latestProcessed?.position || (latestProcessed?.rank ? `#${latestProcessed.rank}` : 'N/A'),
-        isOverallPassed: latestProcessed ? latestProcessed.isOverallPassed : percentage >= 50,
-        teacherRemarks: latestProcessed?.teacherRemarks || (percentage >= 50 ? 'Good performance.' : 'Needs improvement.'),
-        principalRemarks: latestProcessed?.principalRemarks || (percentage >= 50 ? 'Passed' : 'Requires Retake'),
+        isOverallPassed,
+        overallStatus,
+        status: isOverallPassed ? 'PASSED' : 'FAILED',
+        teacherRemarks: latestProcessed?.teacherRemarks || (isOverallPassed ? 'Good performance.' : 'Needs improvement.'),
+        principalRemarks: latestProcessed?.principalRemarks || (isOverallPassed ? 'Passed' : 'Requires Retake'),
         totalSubjects: subjectResultsList.length,
         passedSubjectsCount: latestProcessed ? latestProcessed.passedSubjectsCount : passedCount,
         failedSubjectsCount: latestProcessed ? latestProcessed.failedSubjectsCount : failedCount,

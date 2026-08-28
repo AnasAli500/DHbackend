@@ -4,32 +4,48 @@ const calculatePercentage = (marks, totalMarks) => {
 };
 
 const calculateGrade = (percentage) => {
-  if (percentage >= 95) return 'A+';
-  if (percentage >= 90) return 'A';
-  if (percentage >= 85) return 'A-';
-  if (percentage >= 80) return 'B+';
-  if (percentage >= 75) return 'B';
-  if (percentage >= 70) return 'B-';
-  if (percentage >= 65) return 'C+';
-  if (percentage >= 60) return 'C';
-  if (percentage >= 50) return 'C-';
-  if (percentage >= 40) return 'D';
-  if (percentage >= 20) return 'E';
+  const pct = Number(percentage) || 0;
+  if (pct >= 95) return 'A+';
+  if (pct >= 90) return 'A';
+  if (pct >= 85) return 'A-';
+  if (pct >= 80) return 'B+';
+  if (pct >= 75) return 'B';
+  if (pct >= 70) return 'B-';
+  if (pct >= 65) return 'C+';
+  if (pct >= 60) return 'C';
+  if (pct >= 50) return 'C-';
+  if (pct >= 45) return 'D+';
+  if (pct >= 40) return 'D';
+  if (pct >= 30) return 'D-';
   return 'F';
 };
 
+const PASSING_GRADES = new Set(['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-']);
+
+const isGradePassed = (grade) => {
+  if (!grade) return false;
+  return PASSING_GRADES.has(String(grade).trim().toUpperCase());
+};
+
+const isPercentagePassed = (percentage) => {
+  if (percentage === undefined || percentage === null) return false;
+  return Number(percentage) >= 50;
+};
+
 const calculateGPA = (percentage) => {
-  if (percentage >= 95) return 4.0;
-  if (percentage >= 90) return 3.9;
-  if (percentage >= 85) return 3.7;
-  if (percentage >= 80) return 3.5;
-  if (percentage >= 75) return 3.0;
-  if (percentage >= 70) return 2.7;
-  if (percentage >= 65) return 2.3;
-  if (percentage >= 60) return 2.0;
-  if (percentage >= 50) return 1.5;
-  if (percentage >= 40) return 1.0;
-  if (percentage >= 20) return 0.5;
+  const pct = Number(percentage) || 0;
+  if (pct >= 95) return 4.0;
+  if (pct >= 90) return 3.9;
+  if (pct >= 85) return 3.7;
+  if (pct >= 80) return 3.5;
+  if (pct >= 75) return 3.0;
+  if (pct >= 70) return 2.7;
+  if (pct >= 65) return 2.3;
+  if (pct >= 60) return 2.0;
+  if (pct >= 50) return 1.5;
+  if (pct >= 45) return 1.2;
+  if (pct >= 40) return 1.0;
+  if (pct >= 30) return 0.5;
   return 0.0;
 };
 
@@ -47,7 +63,18 @@ const calculateExamResult = (marks, totalMarks) => {
   const percentage = calculatePercentage(marks, totalMarks);
   const grade = calculateGrade(percentage);
   const gpa = calculateGPA(percentage);
-  return { percentage, grade, gpa };
+  const isPassed = isGradePassed(grade);
+  return { percentage, grade, gpa, isPassed };
 };
 
-module.exports = { calculatePercentage, calculateGrade, calculateGPA, getOrdinalPosition, calculateExamResult };
+module.exports = {
+  calculatePercentage,
+  calculateGrade,
+  calculateGPA,
+  getOrdinalPosition,
+  calculateExamResult,
+  PASSING_GRADES,
+  isGradePassed,
+  isPercentagePassed,
+};
+

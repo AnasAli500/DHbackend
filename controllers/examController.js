@@ -10,7 +10,7 @@ const ProcessedResult = require('../models/ProcessedResult');
 const Settings = require('../models/Settings');
 const Enrollment = require('../models/Enrollment');
 const { getOrCreateActiveEnrollment } = require('../utils/enrollmentHelper');
-const { calculateExamResult, calculatePercentage, calculateGrade, calculateGPA, getOrdinalPosition } = require('../utils/gradeCalculator');
+const { calculateExamResult, calculatePercentage, calculateGrade, calculateGPA, getOrdinalPosition, isGradePassed } = require('../utils/gradeCalculator');
 
 const getExamStructure = async (classId, examSeasonId, examStructureId) => {
   const cls = await Class.findById(classId).populate('category');
@@ -522,7 +522,7 @@ const recalculateProcessedResultsInternal = async (classId, examSeasonId, userId
       const overallGrade = calculateGrade(percentage);
       const gpa = uniqueStudentExams.length > 0 ? Number((totalGpa / uniqueStudentExams.length).toFixed(2)) : 0;
       const missingSubjectsCount = Math.max(0, periods.length - uniqueStudentExams.length);
-      const isOverallPassed = percentage >= 50 && failedSubjectsCount === 0;
+      const isOverallPassed = isGradePassed(overallGrade) || percentage >= 50;
 
       let teacherRemarks = 'Good performance.';
       if (percentage >= 80) teacherRemarks = 'Excellent work! Keep it up.';
@@ -624,7 +624,7 @@ exports.processExamResults = async (req, res) => {
     const overallGrade = calculateGrade(percentage);
     const gpa = studentExams.length > 0 ? Number((totalGpa / studentExams.length).toFixed(2)) : 0;
     const missingSubjectsCount = Math.max(0, periods.length - studentExams.length);
-    const isOverallPassed = percentage >= 50 && failedSubjectsCount === 0;
+    const isOverallPassed = isGradePassed(overallGrade) || percentage >= 50;
 
     let teacherRemarks = 'Good performance.';
     if (percentage >= 80) teacherRemarks = 'Excellent work! Keep it up.';
