@@ -72,7 +72,11 @@ exports.updateStudent = async (req, res) => {
   const oldStudent = await Student.findById(req.params.id);
   if (!oldStudent) return res.status(404).json({ message: 'Student not found' });
 
-  const student = await Student.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true }).populate({
+  // Do not allow studentId to be modified
+  const updateData = { ...req.body };
+  delete updateData.studentId;
+
+  const student = await Student.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true }).populate({
     path: 'classId',
     select: 'className gradeLevel academicYear category status',
     populate: { path: 'category', select: 'name code academicType' },
