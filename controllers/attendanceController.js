@@ -77,7 +77,7 @@ exports.getAttendanceSheet = async (req, res) => {
     return res.status(403).json({ message: 'You are not assigned to this class' });
   }
 
-  const students = await Student.find({ classId }).sort({ name: 1 });
+  const students = await Student.find({ classId, status: { $ne: 'Inactive' } }).sort({ name: 1 });
   const existing = await Attendance.find({
     classId,
     teacherId,
@@ -134,6 +134,11 @@ exports.getAttendance = async (req, res) => {
 
 exports.recordAttendance = async (req, res) => {
   const { studentId, classId, teacherId, periodId, date, status, remarks } = req.body;
+
+  const targetStudent = await Student.findById(studentId);
+  if (!targetStudent || targetStudent.status === 'Inactive') {
+    return res.status(400).json({ message: 'Cannot record attendance for an inactive student' });
+  }
 
   if (req.user.role === 'teacher') {
     const teacher = await getTeacherDoc(req.user);

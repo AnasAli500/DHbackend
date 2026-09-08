@@ -28,6 +28,7 @@ const studentSchema = new mongoose.Schema(
     transferStatus: { type: String, enum: ['In Progress', 'Completed', ''], default: '' },
     monthlyFee: { type: Number, default: 0 },
     admissionFee: { type: Number, default: 0 },
+    status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
     hasAccount: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },

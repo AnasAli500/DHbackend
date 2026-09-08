@@ -8,11 +8,12 @@ const { generateStudentId } = require('../utils/generateId');
 const { getOrCreateActiveEnrollment } = require('../utils/enrollmentHelper');
 
 exports.getStudents = async (req, res) => {
-  const { search, gender, classId, page = 1, limit = 10 } = req.query;
+  const { search, gender, classId, status, page = 1, limit = 10 } = req.query;
   const query = {};
 
   if (gender) query.gender = gender;
   if (classId) query.classId = classId;
+  if (status) query.status = status;
   if (search) {
     query.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -149,7 +150,7 @@ exports.deleteStudent = async (req, res) => {
     return res.status(400).json({ message: 'Cannot delete student with active user account' });
   }
 
-  // Check for historical academic records to prevent cascade deletion
+  // Check for historical academic records
   const [examCount, attendanceCount, enrollmentCount] = await Promise.all([
     Exam.countDocuments({ studentId: student._id }),
     Attendance.countDocuments({ studentId: student._id }),
@@ -157,9 +158,9 @@ exports.deleteStudent = async (req, res) => {
   ]);
 
   if (examCount > 0 || attendanceCount > 0 || enrollmentCount > 1) {
-    return res.status(400).json({
-      message: `Cannot delete student because permanent academic records exist (${examCount} exams, ${attendanceCount} attendance records, ${enrollmentCount} enrollments). Preserve history instead.`,
-    });
+    student.status = 'Inactive';
+    await student.save();
+    return res.json({ message: 'Student has academic records and was set to Inactive to preserve historical data.' });
   }
 
   await Enrollment.deleteMany({ studentId: student._id });

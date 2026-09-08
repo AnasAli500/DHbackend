@@ -1,6 +1,7 @@
 const FeeStructure = require('../models/FeeStructure');
 const Payment = require('../models/Payment');
 const Expense = require('../models/Expense');
+const Student = require('../models/Student');
 const { generateReceiptNo } = require('../utils/generateId');
 
 const calcPaymentFields = (amount, paidAmount) => {
@@ -107,6 +108,11 @@ exports.getPayment = async (req, res) => {
 };
 
 exports.createPayment = async (req, res) => {
+  const targetStudent = await Student.findById(req.body.studentId);
+  if (!targetStudent || targetStudent.status === 'Inactive') {
+    return res.status(400).json({ message: 'Cannot record payment for an inactive student' });
+  }
+
   const receiptNo = await generateReceiptNo(Payment);
   const { amount, paidAmount } = req.body;
   const { balance, status } = calcPaymentFields(Number(amount), Number(paidAmount));
