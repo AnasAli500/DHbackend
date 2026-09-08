@@ -197,9 +197,26 @@ exports.importStudents = async (req, res) => {
       const rawGender = (item.gender || item.Gender || '').toString().trim();
       const className = (item.class || item.Class || item.className || item.ClassName || '').toString().trim();
       const address = (item.address || item.Address || '').toString().trim();
-      const phone = (item.phone || item.Phone || '').toString().trim();
-      const parent = (item.parent || item.Parent || item.parentName || item.ParentName || item.motherName || '').toString().trim();
-      const parentPhone = (item.parentPhone || item.ParentPhone || item.Parent_Phone || '').toString().trim();
+      const phone = (item.phone || item.Phone || item.telephone || '').toString().trim();
+      const motherName = (item.motherName || item['Mother Name'] || item.parent || item.Parent || '').toString().trim();
+      const registeredDate = item.registeredDate || item['Registered Date'] || null;
+      const dateOfBirth = item.dateOfBirth || item.birthday || item.Birthday || item.DOB || null;
+      const birthplace = (item.birthplace || item.Birthplace || '').toString().trim();
+      const nationality = (item.nationality || item.Nationality || '').toString().trim();
+      const state = (item.state || item.State || item['Student State'] || '').toString().trim();
+      const region = (item.region || item.Region || item['Student Region'] || '').toString().trim();
+      const district = (item.district || item.District || item['Student District'] || '').toString().trim();
+      const village = (item.village || item.Village || item['Student Village'] || '').toString().trim();
+      const orphanStatus = (item.orphanStatus || item['Orphan Status'] || '').toString().trim();
+      const disabilityStatus = (item.disabilityStatus || item['Disability Status'] || '').toString().trim();
+      const guardianName = (item.guardianName || item['Guardian Name'] || '').toString().trim();
+      const guardianPhone = (item.guardianPhone || item.parentPhone || item['Guardian Telephone'] || item['Parent Phone'] || '').toString().trim();
+      const refugeeStatus = (item.refugeeStatus || item['Refugee Status'] || '').toString().trim();
+      const schoolType = (item.schoolType || item.school_type || item.Type || item['School Type'] || '').toString().trim();
+      const schoolName = (item.schoolName || item['School Name'] || '').toString().trim();
+      const transferStatus = (item.transferStatus || item['Transfer Status'] || '').toString().trim();
+      const monthlyFee = item.monthlyFee || item['Monthly Fee'] || 0;
+      const admissionFee = item.admissionFee || item['Admission Fee'] || 0;
 
       if (!name) {
         errors.push({ row: rowNum, message: 'Name is required' });
@@ -230,10 +247,28 @@ exports.importStudents = async (req, res) => {
           name,
           gender: formattedGender,
           classId,
-          address,
+          registeredDate: registeredDate ? new Date(registeredDate) : new Date(),
+          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+          motherName: motherName || 'N/A',
           phone,
-          motherName: parent || 'N/A',
-          parentPhone,
+          birthplace,
+          nationality: nationality || 'Somali',
+          address,
+          state,
+          region,
+          district,
+          village,
+          orphanStatus: orphanStatus.toLowerCase() === 'yes' ? 'Yes' : 'No',
+          disabilityStatus: disabilityStatus.toLowerCase() === 'yes' ? 'Yes' : 'No',
+          guardianName,
+          guardianPhone,
+          parentPhone: guardianPhone || phone,
+          refugeeStatus: refugeeStatus.toLowerCase() === 'yes' ? 'Yes' : 'No',
+          schoolType,
+          schoolName,
+          transferStatus: transferStatus || 'In Progress',
+          monthlyFee: Number(monthlyFee) || 0,
+          admissionFee: Number(admissionFee) || 0,
           createdBy: req.user?._id,
         });
 
