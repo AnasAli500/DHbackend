@@ -8,7 +8,7 @@ const { generateStudentId } = require('../utils/generateId');
 const { getOrCreateActiveEnrollment } = require('../utils/enrollmentHelper');
 
 exports.getStudents = async (req, res) => {
-  const { search, gender, classId, status, page = 1, limit = 10 } = req.query;
+  const { search, gender, classId, status, page = 1, limit = 100 } = req.query;
   const query = {};
 
   if (gender) query.gender = gender;
@@ -22,18 +22,27 @@ exports.getStudents = async (req, res) => {
   }
 
   const total = await Student.countDocuments(query);
-  const students = await Student.find(query)
+  const isAll = limit === 'All' || limit === 'all' || Number(limit) === 0;
+  const parsedLimit = isAll ? 0 : Math.max(1, Number(limit) || 100);
+  const parsedPage = Math.max(1, Number(page) || 1);
+
+  let queryExec = Student.find(query)
     .populate({
       path: 'classId',
       select: 'className gradeLevel academicYear category status',
       populate: { path: 'category', select: 'name code academicType' },
     })
     .populate('createdBy', 'name')
-    .sort({ createdAt: -1 })
-    .skip((page - 1) * limit)
-    .limit(Number(limit));
+    .sort({ createdAt: -1 });
 
-  res.json({ students, total, page: Number(page), pages: Math.ceil(total / limit) });
+  if (parsedLimit > 0) {
+    queryExec = queryExec.skip((parsedPage - 1) * parsedLimit).limit(parsedLimit);
+  }
+
+  const students = await queryExec;
+  const pages = parsedLimit > 0 ? (Math.ceil(total / parsedLimit) || 1) : 1;
+
+  res.json({ students, total, page: parsedPage, pages });
 };
 
 exports.getStudent = async (req, res) => {
