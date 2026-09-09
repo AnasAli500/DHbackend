@@ -7,10 +7,11 @@ const Attendance = require('../models/Attendance');
 const { ensureFixedCategories } = require('./categoryController');
 
 exports.getClasses = async (req, res) => {
-  const { search, status, page = 1, limit = 10 } = req.query;
+  const { search, status, page = 1, limit = 10, academicYear } = req.query;
   const query = {};
 
   if (status) query.status = status;
+  if (academicYear) query.academicYear = academicYear;
   if (search) {
     query.$or = [
       { className: { $regex: search, $options: 'i' } },
