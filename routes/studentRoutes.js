@@ -7,6 +7,7 @@ const {
   deleteStudent,
   exportStudents,
   getAcademicHistory,
+  getAcademicYears,
   importStudents,
 } = require('../controllers/studentController');
 const { protect, authorize } = require('../middleware/auth');
@@ -17,6 +18,7 @@ router.use(protect);
 
 router.get('/', authorize('admin', 'teacher'), getStudents);
 router.get('/export', authorize('admin'), exportStudents);
+router.get('/academic-years', authorize('admin', 'teacher'), getAcademicYears);
 router.get('/academic-history/:id', authorize('admin', 'teacher', 'student'), getAcademicHistory);
 router.get('/:id', authorize('admin', 'teacher'), getStudent);
 router.post('/import', authorize('admin'), importStudents);

@@ -8,12 +8,21 @@ const { generateStudentId } = require('../utils/generateId');
 const { getOrCreateActiveEnrollment } = require('../utils/enrollmentHelper');
 
 exports.getStudents = async (req, res) => {
-  const { search, gender, classId, status, page = 1, limit = 100 } = req.query;
+  const { search, gender, classId, status, page = 1, limit = 100, academicYear } = req.query;
   const query = {};
 
   if (gender) query.gender = gender;
-  if (classId) query.classId = classId;
   if (status) query.status = status;
+
+  // If filtering by academicYear, find all classes for that year first
+  if (academicYear) {
+    const classesForYear = await Class.find({ academicYear }).select('_id');
+    const classIds = classesForYear.map((c) => c._id);
+    query.classId = classId ? classId : { $in: classIds };
+  } else if (classId) {
+    query.classId = classId;
+  }
+
   if (search) {
     query.$or = [
       { name: { $regex: search, $options: 'i' } },
@@ -43,6 +52,14 @@ exports.getStudents = async (req, res) => {
   const pages = parsedLimit > 0 ? (Math.ceil(total / parsedLimit) || 1) : 1;
 
   res.json({ students, total, page: parsedPage, pages });
+};
+
+exports.getAcademicYears = async (req, res) => {
+  // Return distinct academic years from Class, sorted descending (latest first)
+  const years = await Class.distinct('academicYear');
+  // Sort descending: e.g. ['2026-2027', '2025-2026', '2024-2025']
+  years.sort((a, b) => b.localeCompare(a));
+  res.json({ years });
 };
 
 exports.getStudent = async (req, res) => {
