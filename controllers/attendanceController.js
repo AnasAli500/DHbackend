@@ -98,7 +98,7 @@ exports.getAttendanceSheet = async (req, res) => {
 };
 
 exports.getAttendance = async (req, res) => {
-  const { studentId, classId, teacherId, date, status, page = 1, limit = 20 } = req.query;
+  const { studentId, classId, teacherId, date, startDate, endDate, status, page = 1, limit = 100 } = req.query;
   const query = {};
 
   if (studentId) query.studentId = studentId;
@@ -107,6 +107,10 @@ exports.getAttendance = async (req, res) => {
   if (status) query.status = status;
   if (date) {
     query.date = { $gte: startOfDay(date), $lte: endOfDay(date) };
+  } else if (startDate || endDate) {
+    query.date = {};
+    if (startDate) query.date.$gte = startOfDay(startDate);
+    if (endDate) query.date.$lte = endOfDay(endDate);
   }
 
   if (req.user.role === 'teacher') {
@@ -121,7 +125,7 @@ exports.getAttendance = async (req, res) => {
 
   const total = await Attendance.countDocuments(query);
   const attendance = await Attendance.find(query)
-    .populate('studentId', 'name studentId')
+    .populate('studentId', 'name studentId parentPhone guardianPhone phone')
     .populate('classId', 'className gradeLevel')
     .populate('teacherId', 'name teacherId')
     .populate('recordedBy', 'name role')
@@ -251,7 +255,7 @@ exports.bulkRecordAttendance = async (req, res) => {
 };
 
 exports.updateAttendance = async (req, res) => {
-  const { status } = req.body;
+  const { status, studentId, classId, date } = req.body;
   const record = await Attendance.findById(req.params.id);
   if (!record) return res.status(404).json({ message: 'Attendance record not found' });
 
@@ -262,12 +266,16 @@ exports.updateAttendance = async (req, res) => {
     }
   }
 
-  record.status = status;
+  if (status) record.status = status;
+  if (studentId) record.studentId = studentId;
+  if (classId) record.classId = classId;
+  if (date) record.date = startOfDay(date);
+
   record.recordedBy = req.user._id;
   await record.save();
 
   const populated = await Attendance.findById(record._id)
-    .populate('studentId', 'name studentId')
+    .populate('studentId', 'name studentId parentPhone guardianPhone phone')
     .populate('classId', 'className')
     .populate('teacherId', 'name')
     .populate('recordedBy', 'name');
