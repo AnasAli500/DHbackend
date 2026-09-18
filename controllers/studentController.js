@@ -169,8 +169,18 @@ exports.getAcademicHistory = async (req, res) => {
 };
 
 exports.deleteStudent = async (req, res) => {
+  const Payment = require('../models/Payment');
   const student = await Student.findById(req.params.id);
   if (!student) return res.status(404).json({ message: 'Student not found' });
+
+  // Hard requirement §2: Check if student has payment history
+  const paymentCount = await Payment.countDocuments({ studentId: student._id });
+  if (paymentCount > 0) {
+    return res.status(409).json({
+      message: 'Cannot delete student with existing payment history. Please deactivate the student instead.',
+      canDeactivate: true,
+    });
+  }
 
   if (student.hasAccount) {
     return res.status(400).json({ message: 'Cannot delete student with active user account' });
