@@ -92,7 +92,7 @@ exports.getSummary = async (req, res) => {
     for (const student of students) {
       // Match relevant fee structures for student's class
       const matchingFees = feeStructures.filter(
-        (f) => f.classId.toString() === student.classId.toString()
+        (f) => f.classId && student.classId && f.classId.toString() === student.classId.toString()
       );
 
       for (const fee of matchingFees) {
@@ -293,7 +293,7 @@ exports.getStudentBalances = async (req, res) => {
       // Find saved discount
       const discountRecord = await StudentBalance.findOne({
         studentId: student._id,
-        feeStructureId: fee._id || feeId,
+        feeStructureId: feeStructure._id,
         ...(isMonthly ? { billingYear: bYear, billingMonth: bMonth } : {}),
       });
 
