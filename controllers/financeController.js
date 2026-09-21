@@ -326,6 +326,7 @@ exports.getStudentBalances = async (req, res) => {
           _id: student._id,
           studentId: student.studentId,
           name: student.name,
+          parentPhone: student.parentPhone || student.guardianPhone || '',
           academicYear: student.academicYear || feeStructure.academicYear,
           classId: student.classId,
           originalFee: feeStructure.amount,
@@ -433,7 +434,7 @@ exports.getPayments = async (req, res) => {
 
     const total = await Payment.countDocuments(query);
     const payments = await Payment.find(query)
-      .populate('studentId', 'name studentId phone')
+      .populate('studentId', 'name studentId phone parentPhone guardianPhone')
       .populate('classId', 'className gradeLevel academicYear')
       .populate('feeId', 'name amount frequency')
       .populate('recordedBy', 'name')
