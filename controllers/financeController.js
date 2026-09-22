@@ -4,6 +4,7 @@ const StudentBalance = require('../models/StudentBalance');
 const Expense = require('../models/Expense');
 const Student = require('../models/Student');
 const Class = require('../models/Class');
+const Enrollment = require('../models/Enrollment');
 const { generateReceiptNo } = require('../utils/generateId');
 
 // Helper to calculate discount amount
@@ -69,12 +70,21 @@ exports.getSummary = async (req, res) => {
 
     let feeStructures = await FeeStructure.find(feeQuery);
 
-    let studentQuery = { status: 'Active' };
+    let studentQuery = { status: { $ne: 'Inactive' } };
     if (classId) {
-      studentQuery.classId = classId;
+      const enrolledStudentIds = await Enrollment.distinct('studentId', { classId, status: { $ne: 'Inactive' } });
+      studentQuery.$or = [
+        { classId },
+        { _id: { $in: enrolledStudentIds } },
+      ];
     } else if (academicYear) {
       const classesForYear = await Class.find({ academicYear }).select('_id');
-      studentQuery.classId = { $in: classesForYear.map((c) => c._id) };
+      const classIds = classesForYear.map((c) => c._id);
+      const enrolledStudentIds = await Enrollment.distinct('studentId', { classId: { $in: classIds }, status: { $ne: 'Inactive' } });
+      studentQuery.$or = [
+        { classId: { $in: classIds } },
+        { _id: { $in: enrolledStudentIds } },
+      ];
     }
 
     const students = await Student.find(studentQuery);
@@ -90,9 +100,15 @@ exports.getSummary = async (req, res) => {
 
     // Process all active students in scope
     for (const student of students) {
+      let sClassId = student.classId ? student.classId.toString() : null;
+      if (!sClassId) {
+        const activeEnc = await Enrollment.findOne({ studentId: student._id, status: { $ne: 'Inactive' } });
+        if (activeEnc) sClassId = activeEnc.classId.toString();
+      }
+
       // Match relevant fee structures for student's class
       const matchingFees = feeStructures.filter(
-        (f) => f.classId && student.classId && f.classId.toString() === student.classId.toString()
+        (f) => f.classId && sClassId && f.classId.toString() === sClassId
       );
 
       for (const fee of matchingFees) {
@@ -270,12 +286,25 @@ exports.getStudentBalances = async (req, res) => {
     const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
     const bMonth = isMonthly ? (billingMonth || 'January') : null;
 
-    // Find active students in class
-    let studentQuery = { classId, status: 'Active' };
+    // Find active student IDs from both direct Student.classId and active Enrollments
+    const enrolledStudentIds = await Enrollment.distinct('studentId', { classId, status: { $ne: 'Inactive' } });
+
+    let studentQuery = {
+      $or: [
+        { classId },
+        { _id: { $in: enrolledStudentIds } },
+      ],
+      status: { $ne: 'Inactive' },
+    };
+
     if (search) {
-      studentQuery.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { studentId: { $regex: search, $options: 'i' } },
+      studentQuery.$and = [
+        {
+          $or: [
+            { name: { $regex: search, $options: 'i' } },
+            { studentId: { $regex: search, $options: 'i' } },
+          ],
+        },
       ];
     }
 
