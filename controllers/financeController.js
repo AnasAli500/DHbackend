@@ -1186,8 +1186,9 @@ exports.unlinkStudentFromFamily = async (req, res) => {
     const group = await FamilyGroup.findById(student.familyGroupId);
     if (group) {
       group.students = group.students.filter(s => s.toString() !== studentId.toString());
-      if (group.students.length === 0) {
-        // Delete the group if no students remain
+      if (group.students.length <= 1) {
+        // Dissolve group if 1 or 0 students remain
+        await Student.updateMany({ familyGroupId: group._id }, { familyGroupId: null });
         await group.deleteOne();
       } else {
         group.updatedBy = req.user._id;
@@ -1221,7 +1222,14 @@ exports.getStudentFamily = async (req, res) => {
         populate: { path: 'classId', select: 'className gradeLevel' }
       });
 
-    if (!group) return res.json({ familyGroup: null, members: [] });
+    if (!group || !group.students || group.students.length < 2) {
+      if (group) {
+        // Auto-dissolve orphaned group with < 2 active members
+        await Student.updateMany({ familyGroupId: group._id }, { familyGroupId: null });
+        await group.deleteOne();
+      }
+      return res.json({ familyGroup: null, members: [] });
+    }
 
     // Get balance details for ALL active family members (including requested student)
     const members = [];
