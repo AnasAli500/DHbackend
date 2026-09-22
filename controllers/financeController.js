@@ -1214,20 +1214,26 @@ exports.getStudentFamily = async (req, res) => {
     if (!student.familyGroupId) return res.json({ familyGroup: null, members: [] });
 
     const group = await FamilyGroup.findById(student.familyGroupId)
-      .populate('students', 'name studentId classId status familyGroupId');
+      .populate({
+        path: 'students',
+        select: 'name studentId classId status familyGroupId',
+        match: { status: { $ne: 'Inactive' } },
+        populate: { path: 'classId', select: 'className gradeLevel' }
+      });
+
     if (!group) return res.json({ familyGroup: null, members: [] });
 
-    // Get balance details for each family member (excluding the selected student)
+    // Get balance details for ALL active family members (including requested student)
     const members = [];
     for (const member of group.students) {
-      if (member._id.toString() === studentId) continue;
-
       let memberDetails = {
         _id: member._id,
         studentId: member.studentId,
         name: member.name,
         classId: member.classId,
+        className: member.classId?.className || '—',
         status: member.status,
+        isSelf: member._id.toString() === studentId,
         originalFee: 0,
         discountType: 'Fixed',
         discountValue: 0,
@@ -1280,6 +1286,9 @@ exports.getStudentFamily = async (req, res) => {
 
       members.push(memberDetails);
     }
+
+    // Sort so selected student is first
+    members.sort((a, b) => (b.isSelf ? 1 : 0) - (a.isSelf ? 1 : 0));
 
     res.json({
       familyGroup: { _id: group._id, familyName: group.familyName },
@@ -1360,7 +1369,14 @@ exports.createFamilyPayment = async (req, res) => {
     const allocationRecords = [];
 
     for (const item of allocations) {
-      const { studentId, classId, feeId, billingYear, billingMonth, academicYear: itemYear, allocatedAmount } = item;
+      const studentId = item.studentId;
+      const feeId = item.feeId || req.body.feeId;
+      const classId = item.classId || req.body.classId;
+      const billingYear = item.billingYear || req.body.billingYear;
+      const billingMonth = item.billingMonth || req.body.billingMonth;
+      const itemYear = item.academicYear || req.body.academicYear;
+      const allocatedAmount = item.allocatedAmount;
+
       const pmtNow = Number(allocatedAmount) || 0;
       if (pmtNow <= 0) continue; // Skip $0 allocations (e.g. FREE students)
 
