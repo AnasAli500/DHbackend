@@ -1293,6 +1293,9 @@ exports.getStudentFamily = async (req, res) => {
       return res.json({ familyGroup: null, members: [] });
     }
 
+    // Load the reference fee structure (from the requesting student) to match by feeType & frequency
+    const referenceFee = feeId ? await FeeStructure.findById(feeId) : null;
+
     // Get balance details for ALL active family members (including requested student)
     const members = [];
     for (const member of group.students) {
@@ -1315,8 +1318,37 @@ exports.getStudentFamily = async (req, res) => {
         isFree: false,
       };
 
-      if (feeId) {
-        const fee = await FeeStructure.findById(feeId);
+      if (feeId && referenceFee) {
+        // Find the fee structure that belongs to this member's own class,
+        // matching the same feeType and frequency as the reference fee.
+        const memberClassId = member.classId?._id || member.classId;
+        let memberFee = null;
+
+        if (memberClassId) {
+          // Look for a fee structure in the member's own class with same feeType & frequency
+          memberFee = await FeeStructure.findOne({
+            classId: memberClassId,
+            feeType: referenceFee.feeType,
+            frequency: referenceFee.frequency,
+            academicYear: referenceFee.academicYear,
+            status: 'Active',
+          });
+
+          // Fallback: match by name if feeType lookup didn't find anything
+          if (!memberFee) {
+            memberFee = await FeeStructure.findOne({
+              classId: memberClassId,
+              name: referenceFee.name,
+              frequency: referenceFee.frequency,
+              academicYear: referenceFee.academicYear,
+              status: 'Active',
+            });
+          }
+        }
+
+        // If no class-specific fee found, fall back to the original reference fee
+        const fee = memberFee || referenceFee;
+
         if (fee) {
           const isMonthly = fee.frequency === 'Monthly';
           const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
@@ -1341,6 +1373,7 @@ exports.getStudentFamily = async (req, res) => {
 
           memberDetails = {
             ...memberDetails,
+            feeId: fee._id,
             originalFee: effectiveDiscount.isFree ? 0 : fee.amount,
             discountType: effectiveDiscount.discountType,
             discountValue: effectiveDiscount.discountValue,
