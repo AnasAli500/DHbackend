@@ -5,7 +5,11 @@ const Expense = require('../models/Expense');
 const Student = require('../models/Student');
 const Class = require('../models/Class');
 const Enrollment = require('../models/Enrollment');
-const { generateReceiptNo } = require('../utils/generateId');
+const StudentFinanceProfile = require('../models/StudentFinanceProfile');
+const FamilyGroup = require('../models/FamilyGroup');
+const FamilyPayment = require('../models/FamilyPayment');
+const { generateReceiptNo, generateFamilyReceiptNo } = require('../utils/generateId');
+
 
 // Helper to calculate discount amount
 const calculateDiscount = (originalFee, discountType, discountValue) => {
@@ -43,6 +47,67 @@ const calculateStatus = (amountRequired, totalPaid, dueDate, billingMonth, billi
   if (isOverdue && pending > 0) return 'Overdue';
   if (totalPaid > 0) return 'Partial';
   return 'Pending';
+};
+
+// Helper: get effective discount for a student, checking StudentFinanceProfile first
+// Returns { financeStatus, discountType, discountValue, discountAmount, isFree }
+const getEffectiveDiscount = async (studentId, feeAmount, feeStructureId, bYear, bMonth) => {
+  // 1. Check persistent StudentFinanceProfile
+  const profile = await StudentFinanceProfile.findOne({ studentId });
+
+  if (profile && profile.financeStatus === 'free') {
+    return {
+      financeStatus: 'free',
+      discountType: 'Percentage',
+      discountValue: 100,
+      discountAmount: feeAmount,
+      isFree: true,
+      profileExists: true,
+    };
+  }
+
+  // 2. Check per-period StudentBalance override (backward compat)
+  const balanceRecord = await StudentBalance.findOne({
+    studentId,
+    feeStructureId,
+    ...(bYear != null ? { billingYear: bYear } : {}),
+    ...(bMonth != null ? { billingMonth: bMonth } : {}),
+  });
+
+  if (balanceRecord && (balanceRecord.discountValue > 0)) {
+    const discountAmount = calculateDiscount(feeAmount, balanceRecord.discountType, balanceRecord.discountValue);
+    return {
+      financeStatus: profile?.financeStatus || 'discounted',
+      discountType: balanceRecord.discountType,
+      discountValue: balanceRecord.discountValue,
+      discountAmount,
+      isFree: false,
+      profileExists: !!profile,
+    };
+  }
+
+  // 3. Fall back to profile discount (if profile has discounted status)
+  if (profile && profile.financeStatus === 'discounted' && profile.discountValue > 0) {
+    const discountAmount = calculateDiscount(feeAmount, profile.discountType, profile.discountValue);
+    return {
+      financeStatus: 'discounted',
+      discountType: profile.discountType,
+      discountValue: profile.discountValue,
+      discountAmount,
+      isFree: false,
+      profileExists: true,
+    };
+  }
+
+  // 4. No discount
+  return {
+    financeStatus: profile?.financeStatus || 'normal',
+    discountType: 'Fixed',
+    discountValue: 0,
+    discountAmount: 0,
+    isFree: false,
+    profileExists: !!profile,
+  };
 };
 
 // ── Academic Years ──
@@ -319,17 +384,17 @@ exports.getStudentBalances = async (req, res) => {
     let sumOverdue = 0;
 
     for (const student of students) {
-      // Find saved discount
-      const discountRecord = await StudentBalance.findOne({
-        studentId: student._id,
-        feeStructureId: feeStructure._id,
-        ...(isMonthly ? { billingYear: bYear, billingMonth: bMonth } : {}),
-      });
+      // Use unified discount resolution (StudentFinanceProfile > StudentBalance)
+      const effectiveDiscount = await getEffectiveDiscount(
+        student._id,
+        feeStructure.amount,
+        feeStructure._id,
+        isMonthly ? bYear : null,
+        isMonthly ? bMonth : null
+      );
 
-      const discountType = discountRecord ? discountRecord.discountType : 'Fixed';
-      const discountValue = discountRecord ? discountRecord.discountValue : 0;
-      const discountAmount = calculateDiscount(feeStructure.amount, discountType, discountValue);
-      const amountRequired = Math.max(0, feeStructure.amount - discountAmount);
+      const { financeStatus, discountType, discountValue, discountAmount, isFree } = effectiveDiscount;
+      const amountRequired = isFree ? 0 : Math.max(0, feeStructure.amount - discountAmount);
 
       // Find payments
       const pmtMatch = {
@@ -341,10 +406,10 @@ exports.getStudentBalances = async (req, res) => {
       const payments = await Payment.find(pmtMatch).sort({ paymentDate: -1 });
       const paid = payments.reduce((sum, p) => sum + (p.paidAmount || 0), 0);
       const pending = Math.max(0, amountRequired - paid);
-      const pmtStatus = calculateStatus(amountRequired, paid, feeStructure.dueDate, bMonth, bYear);
+      const pmtStatus = isFree ? 'Paid' : calculateStatus(amountRequired, paid, feeStructure.dueDate, bMonth, bYear);
 
       if (!status || status === 'All' || pmtStatus === status) {
-        sumOriginal += feeStructure.amount;
+        sumOriginal += isFree ? 0 : feeStructure.amount;
         sumDiscounts += discountAmount;
         sumRequired += amountRequired;
         sumPaid += paid;
@@ -358,7 +423,10 @@ exports.getStudentBalances = async (req, res) => {
           parentPhone: student.parentPhone || student.guardianPhone || '',
           academicYear: student.academicYear || feeStructure.academicYear,
           classId: student.classId,
-          originalFee: feeStructure.amount,
+          familyGroupId: student.familyGroupId || null,
+          financeStatus,
+          isFree,
+          originalFee: isFree ? 0 : feeStructure.amount,
           discountType,
           discountValue,
           discountAmount,
@@ -370,6 +438,7 @@ exports.getStudentBalances = async (req, res) => {
         });
       }
     }
+
 
     res.json({
       students: results,
@@ -523,13 +592,14 @@ exports.createPayment = async (req, res) => {
       academicYear,
       billingYear,
       billingMonth,
-      discountType = 'Fixed',
-      discountValue = 0,
+      discountType: reqDiscountType,
+      discountValue: reqDiscountValue,
       paidAmount,
       paymentMethod = 'Cash',
       referenceNumber = '',
       paymentDate = new Date(),
       note = '',
+      allowFreeOverride = false, // admin must explicitly set this to pay a FREE student
     } = req.body;
 
     const student = await Student.findById(studentId);
@@ -544,21 +614,46 @@ exports.createPayment = async (req, res) => {
     const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
     const bMonth = isMonthly ? (billingMonth || 'January') : null;
 
-    // Save discount setting
+    // Check FREE status
+    const profile = await StudentFinanceProfile.findOne({ studentId });
+    if (profile && profile.financeStatus === 'free' && !allowFreeOverride) {
+      return res.status(400).json({
+        message: 'This student is marked as FREE. No payment is required. Use allowFreeOverride to record an exceptional payment.',
+        isFreeStudent: true,
+      });
+    }
+
+    // Resolve discount: use request values if provided, else use profile/balance
+    let discountType = 'Fixed';
+    let discountValue = 0;
+
+    if (reqDiscountType !== undefined && reqDiscountValue !== undefined) {
+      // Explicit override from request (e.g. admin changed discount in modal)
+      discountType = reqDiscountType || 'Fixed';
+      discountValue = Number(reqDiscountValue) || 0;
+    } else {
+      // Auto-load from profile (if not free)
+      if (profile && profile.financeStatus === 'discounted' && profile.discountValue > 0) {
+        discountType = profile.discountType;
+        discountValue = profile.discountValue;
+      }
+    }
+
+    // Save/update the per-period StudentBalance record for this fee period
+    const discountAmount = calculateDiscount(fee.amount, discountType, discountValue);
+    const amountRequired = Math.max(0, fee.amount - discountAmount);
+
     await StudentBalance.findOneAndUpdate(
       { studentId, feeStructureId: feeId, billingYear: bYear, billingMonth: bMonth },
       {
         discountType,
-        discountValue: Number(discountValue) || 0,
-        discountAmount: calculateDiscount(fee.amount, discountType, discountValue),
-        amountRequired: Math.max(0, fee.amount - calculateDiscount(fee.amount, discountType, discountValue)),
+        discountValue,
+        discountAmount,
+        amountRequired,
         createdBy: req.user._id,
       },
       { upsert: true, new: true }
     );
-
-    const discountAmount = calculateDiscount(fee.amount, discountType, discountValue);
-    const amountRequired = Math.max(0, fee.amount - discountAmount);
 
     // Calculate previously paid
     const pmtMatch = {
@@ -599,7 +694,7 @@ exports.createPayment = async (req, res) => {
       billingMonth: bMonth,
       originalAmount: fee.amount,
       discountType,
-      discountValue: Number(discountValue) || 0,
+      discountValue,
       discountAmount,
       amountRequired,
       previouslyPaid,
@@ -624,6 +719,7 @@ exports.createPayment = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
+
 
 // ── Bulk Payment ──
 
@@ -816,6 +912,571 @@ exports.deleteExpense = async (req, res) => {
     const expense = await Expense.findByIdAndDelete(req.params.id);
     if (!expense) return res.status(404).json({ message: 'Expense not found' });
     res.json({ message: 'Expense deleted' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// ── Student Finance Profile (Persistent Discount / Free Status) ──
+// ══════════════════════════════════════════════════════
+
+exports.getStudentFinanceProfile = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const student = await Student.findById(studentId).select('name studentId familyGroupId');
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    const profile = await StudentFinanceProfile.findOne({ studentId })
+      .populate('updatedBy', 'name')
+      .populate('discountHistory.changedBy', 'name');
+
+    res.json({
+      student,
+      profile: profile || {
+        financeStatus: 'normal',
+        discountType: 'Fixed',
+        discountValue: 0,
+        discountHistory: [],
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.upsertStudentFinanceProfile = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { financeStatus, discountType, discountValue, note } = req.body;
+
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    // Build the history entry
+    const historyEntry = {
+      financeStatus: financeStatus || 'normal',
+      discountType: discountType || 'Fixed',
+      discountValue: Number(discountValue) || 0,
+      note: note || '',
+      changedBy: req.user._id,
+      changedAt: new Date(),
+    };
+
+    const profile = await StudentFinanceProfile.findOneAndUpdate(
+      { studentId },
+      {
+        financeStatus: financeStatus || 'normal',
+        discountType: discountType || 'Fixed',
+        discountValue: Number(discountValue) || 0,
+        updatedBy: req.user._id,
+        $push: { discountHistory: { $each: [historyEntry], $position: 0 } },
+      },
+      { upsert: true, new: true, runValidators: true }
+    )
+      .populate('updatedBy', 'name')
+      .populate('discountHistory.changedBy', 'name');
+
+    res.json(profile);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.removeStudentDiscount = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    const historyEntry = {
+      financeStatus: 'normal',
+      discountType: 'Fixed',
+      discountValue: 0,
+      note: 'Discount removed',
+      changedBy: req.user._id,
+      changedAt: new Date(),
+    };
+
+    const profile = await StudentFinanceProfile.findOneAndUpdate(
+      { studentId },
+      {
+        financeStatus: 'normal',
+        discountType: 'Fixed',
+        discountValue: 0,
+        updatedBy: req.user._id,
+        $push: { discountHistory: { $each: [historyEntry], $position: 0 } },
+      },
+      { upsert: true, new: true }
+    );
+
+    res.json({ message: 'Discount removed successfully', profile });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// ── Family Groups ──
+// ══════════════════════════════════════════════════════
+
+exports.getFamilyGroups = async (req, res) => {
+  try {
+    const groups = await FamilyGroup.find()
+      .populate('students', 'name studentId classId status')
+      .populate('createdBy', 'name')
+      .sort({ createdAt: -1 });
+    res.json(groups);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.getFamilyGroup = async (req, res) => {
+  try {
+    const group = await FamilyGroup.findById(req.params.id)
+      .populate('students', 'name studentId classId status familyGroupId')
+      .populate('createdBy', 'name');
+    if (!group) return res.status(404).json({ message: 'Family group not found' });
+    res.json(group);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+exports.createFamilyGroup = async (req, res) => {
+  try {
+    const { familyName, studentIds = [] } = req.body;
+    if (!familyName) return res.status(400).json({ message: 'Family name is required' });
+
+    const group = await FamilyGroup.create({
+      familyName,
+      students: studentIds,
+      createdBy: req.user._id,
+      updatedBy: req.user._id,
+    });
+
+    // Update each student's familyGroupId
+    if (studentIds.length > 0) {
+      await Student.updateMany({ _id: { $in: studentIds } }, { familyGroupId: group._id });
+    }
+
+    const populated = await FamilyGroup.findById(group._id)
+      .populate('students', 'name studentId classId status')
+      .populate('createdBy', 'name');
+    res.status(201).json(populated);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.updateFamilyGroup = async (req, res) => {
+  try {
+    const { familyName } = req.body;
+    const group = await FamilyGroup.findByIdAndUpdate(
+      req.params.id,
+      { familyName, updatedBy: req.user._id },
+      { new: true, runValidators: true }
+    ).populate('students', 'name studentId classId status');
+    if (!group) return res.status(404).json({ message: 'Family group not found' });
+    res.json(group);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.deleteFamilyGroup = async (req, res) => {
+  try {
+    const group = await FamilyGroup.findById(req.params.id);
+    if (!group) return res.status(404).json({ message: 'Family group not found' });
+
+    // Clear familyGroupId from all students in this group
+    await Student.updateMany({ familyGroupId: group._id }, { familyGroupId: null });
+    await group.deleteOne();
+
+    res.json({ message: 'Family group deleted and students unlinked' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Link two or more students into a family group
+exports.linkStudentsAsFamily = async (req, res) => {
+  try {
+    const { studentIdA, studentIdB, familyName } = req.body;
+
+    if (!studentIdA || !studentIdB) {
+      return res.status(400).json({ message: 'Both studentIdA and studentIdB are required' });
+    }
+    if (studentIdA === studentIdB) {
+      return res.status(400).json({ message: 'Cannot link a student to themselves' });
+    }
+
+    const [studentA, studentB] = await Promise.all([
+      Student.findById(studentIdA),
+      Student.findById(studentIdB),
+    ]);
+
+    if (!studentA || !studentB) return res.status(404).json({ message: 'One or both students not found' });
+
+    // Check if they're already in the same group
+    if (
+      studentA.familyGroupId &&
+      studentB.familyGroupId &&
+      studentA.familyGroupId.toString() === studentB.familyGroupId.toString()
+    ) {
+      return res.status(409).json({ message: 'Students are already in the same family group' });
+    }
+
+    let group;
+
+    if (studentA.familyGroupId) {
+      // A already has a group — add B to it
+      group = await FamilyGroup.findById(studentA.familyGroupId);
+      if (!group.students.map(s => s.toString()).includes(studentIdB)) {
+        group.students.push(studentIdB);
+        group.updatedBy = req.user._id;
+        await group.save();
+      }
+      // If B was in another group, remove from that group first
+      if (studentB.familyGroupId && studentB.familyGroupId.toString() !== group._id.toString()) {
+        await FamilyGroup.findByIdAndUpdate(studentB.familyGroupId, { $pull: { students: studentIdB } });
+      }
+      await Student.findByIdAndUpdate(studentIdB, { familyGroupId: group._id });
+    } else if (studentB.familyGroupId) {
+      // B already has a group — add A to it
+      group = await FamilyGroup.findById(studentB.familyGroupId);
+      if (!group.students.map(s => s.toString()).includes(studentIdA)) {
+        group.students.push(studentIdA);
+        group.updatedBy = req.user._id;
+        await group.save();
+      }
+      await Student.findByIdAndUpdate(studentIdA, { familyGroupId: group._id });
+    } else {
+      // Neither has a group — create one
+      group = await FamilyGroup.create({
+        familyName: familyName || `${studentA.name} Family`,
+        students: [studentIdA, studentIdB],
+        createdBy: req.user._id,
+        updatedBy: req.user._id,
+      });
+      await Student.updateMany({ _id: { $in: [studentIdA, studentIdB] } }, { familyGroupId: group._id });
+    }
+
+    const populated = await FamilyGroup.findById(group._id)
+      .populate('students', 'name studentId classId status familyGroupId');
+
+    res.status(201).json({ message: 'Students linked as family', group: populated });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+// Remove a student from their family group
+exports.unlinkStudentFromFamily = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+    if (!student.familyGroupId) return res.status(400).json({ message: 'Student is not in any family group' });
+
+    const group = await FamilyGroup.findById(student.familyGroupId);
+    if (group) {
+      group.students = group.students.filter(s => s.toString() !== studentId);
+      if (group.students.length === 0) {
+        // Delete the group if no students remain
+        await group.deleteOne();
+      } else {
+        group.updatedBy = req.user._id;
+        await group.save();
+      }
+    }
+
+    await Student.findByIdAndUpdate(studentId, { familyGroupId: null });
+
+    res.json({ message: 'Student removed from family group' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Get a student's family members with their current balance details (for a given fee/period)
+exports.getStudentFamily = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { feeId, billingYear, billingMonth, academicYear } = req.query;
+
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+    if (!student.familyGroupId) return res.json({ familyGroup: null, members: [] });
+
+    const group = await FamilyGroup.findById(student.familyGroupId)
+      .populate('students', 'name studentId classId status familyGroupId');
+    if (!group) return res.json({ familyGroup: null, members: [] });
+
+    // Get balance details for each family member (excluding the selected student)
+    const members = [];
+    for (const member of group.students) {
+      if (member._id.toString() === studentId) continue;
+
+      let memberDetails = {
+        _id: member._id,
+        studentId: member.studentId,
+        name: member.name,
+        classId: member.classId,
+        status: member.status,
+        originalFee: 0,
+        discountType: 'Fixed',
+        discountValue: 0,
+        discountAmount: 0,
+        amountRequired: 0,
+        paid: 0,
+        pending: 0,
+        financeStatus: 'normal',
+        isFree: false,
+      };
+
+      if (feeId) {
+        const fee = await FeeStructure.findById(feeId);
+        if (fee) {
+          const isMonthly = fee.frequency === 'Monthly';
+          const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
+          const bMonth = isMonthly ? (billingMonth || null) : null;
+
+          const effectiveDiscount = await getEffectiveDiscount(
+            member._id, fee.amount, fee._id, bYear, bMonth
+          );
+
+          const amountRequired = effectiveDiscount.isFree ? 0 : Math.max(0, fee.amount - effectiveDiscount.discountAmount);
+
+          const pmtMatch = {
+            studentId: member._id,
+            feeId: fee._id,
+            ...(isMonthly && bYear ? { billingYear: bYear } : {}),
+            ...(isMonthly && bMonth ? { billingMonth: bMonth } : {}),
+          };
+
+          const payments = await Payment.find(pmtMatch);
+          const paid = payments.reduce((sum, p) => sum + (p.paidAmount || 0), 0);
+          const pending = Math.max(0, amountRequired - paid);
+
+          memberDetails = {
+            ...memberDetails,
+            originalFee: effectiveDiscount.isFree ? 0 : fee.amount,
+            discountType: effectiveDiscount.discountType,
+            discountValue: effectiveDiscount.discountValue,
+            discountAmount: effectiveDiscount.discountAmount,
+            amountRequired,
+            paid,
+            pending,
+            financeStatus: effectiveDiscount.financeStatus,
+            isFree: effectiveDiscount.isFree,
+          };
+        }
+      }
+
+      members.push(memberDetails);
+    }
+
+    res.json({
+      familyGroup: { _id: group._id, familyName: group.familyName },
+      members,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// Search students for linking as family (by name, studentId, phone)
+exports.searchStudentsForFamily = async (req, res) => {
+  try {
+    const { search, excludeStudentId } = req.query;
+    if (!search || search.length < 2) {
+      return res.json([]);
+    }
+
+    const query = {
+      status: { $ne: 'Inactive' },
+      $or: [
+        { name: { $regex: search, $options: 'i' } },
+        { studentId: { $regex: search, $options: 'i' } },
+        { phone: { $regex: search, $options: 'i' } },
+        { parentPhone: { $regex: search, $options: 'i' } },
+        { guardianPhone: { $regex: search, $options: 'i' } },
+      ],
+    };
+
+    if (excludeStudentId) {
+      query._id = { $ne: excludeStudentId };
+    }
+
+    const students = await Student.find(query)
+      .select('name studentId classId phone parentPhone familyGroupId')
+      .populate('classId', 'className gradeLevel')
+      .limit(15);
+
+    res.json(students);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// ══════════════════════════════════════════════════════
+// ── Family Payment (Multi-student) ──
+// ══════════════════════════════════════════════════════
+
+exports.createFamilyPayment = async (req, res) => {
+  try {
+    const {
+      allocations, // [{ studentId, classId, feeId, billingYear, billingMonth, academicYear, allocatedAmount }]
+      totalPaid,
+      paymentMethod = 'Cash',
+      referenceNumber = '',
+      paymentDate = new Date(),
+      note = '',
+      familyGroupId = null,
+    } = req.body;
+
+    if (!Array.isArray(allocations) || allocations.length === 0) {
+      return res.status(400).json({ message: 'No payment allocations provided' });
+    }
+
+    const pmtNowTotal = Number(totalPaid);
+    if (isNaN(pmtNowTotal) || pmtNowTotal <= 0) {
+      return res.status(400).json({ message: 'Total paid amount must be greater than 0' });
+    }
+
+    const allocationSum = allocations.reduce((sum, a) => sum + (Number(a.allocatedAmount) || 0), 0);
+    if (Math.abs(allocationSum - pmtNowTotal) > 0.01) {
+      return res.status(400).json({
+        message: `Allocation sum ($${allocationSum.toFixed(2)}) must equal total paid ($${pmtNowTotal.toFixed(2)})`,
+      });
+    }
+
+    const createdPayments = [];
+    const allocationRecords = [];
+
+    for (const item of allocations) {
+      const { studentId, classId, feeId, billingYear, billingMonth, academicYear: itemYear, allocatedAmount } = item;
+      const pmtNow = Number(allocatedAmount) || 0;
+      if (pmtNow <= 0) continue; // Skip $0 allocations (e.g. FREE students)
+
+      const student = await Student.findById(studentId);
+      if (!student || student.status === 'Inactive') continue;
+
+      const fee = await FeeStructure.findById(feeId);
+      if (!fee) continue;
+
+      const isMonthly = fee.frequency === 'Monthly';
+      const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
+      const bMonth = isMonthly ? (billingMonth || null) : null;
+
+      const effectiveDiscount = await getEffectiveDiscount(student._id, fee.amount, fee._id, bYear, bMonth);
+      const amountRequired = effectiveDiscount.isFree ? 0 : Math.max(0, fee.amount - effectiveDiscount.discountAmount);
+
+      // Get previously paid
+      const pmtMatch = {
+        studentId,
+        feeId,
+        ...(isMonthly && bYear ? { billingYear: bYear } : {}),
+        ...(isMonthly && bMonth ? { billingMonth: bMonth } : {}),
+      };
+      const prevPayments = await Payment.find(pmtMatch);
+      const previouslyPaid = prevPayments.reduce((sum, p) => sum + (p.paidAmount || 0), 0);
+      const pendingBefore = Math.max(0, amountRequired - previouslyPaid);
+
+      if (pmtNow > pendingBefore + 0.01) {
+        return res.status(400).json({
+          message: `Allocation for ${student.name} ($${pmtNow}) exceeds pending balance ($${pendingBefore.toFixed(2)})`,
+        });
+      }
+
+      const totalPaidAfter = previouslyPaid + pmtNow;
+      const remainingBalance = Math.max(0, amountRequired - totalPaidAfter);
+      const newStatus = calculateStatus(amountRequired, totalPaidAfter, fee.dueDate, bMonth, bYear);
+
+      // Save/update per-period StudentBalance
+      await StudentBalance.findOneAndUpdate(
+        { studentId, feeStructureId: feeId, billingYear: bYear, billingMonth: bMonth },
+        {
+          discountType: effectiveDiscount.discountType,
+          discountValue: effectiveDiscount.discountValue,
+          discountAmount: effectiveDiscount.discountAmount,
+          amountRequired,
+          createdBy: req.user._id,
+        },
+        { upsert: true }
+      );
+
+      const receiptNo = await generateReceiptNo(Payment);
+      const newPmt = await Payment.create({
+        receiptNo,
+        studentId,
+        classId: classId || student.classId,
+        feeId,
+        feeName: fee.name,
+        academicYear: itemYear || fee.academicYear,
+        billingYear: bYear,
+        billingMonth: bMonth,
+        originalAmount: fee.amount,
+        discountType: effectiveDiscount.discountType,
+        discountValue: effectiveDiscount.discountValue,
+        discountAmount: effectiveDiscount.discountAmount,
+        amountRequired,
+        previouslyPaid,
+        paidAmount: pmtNow,
+        balance: remainingBalance,
+        paymentMethod,
+        referenceNumber,
+        paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+        status: newStatus,
+        note: note ? `[Family Payment] ${note}` : '[Family Payment]',
+        recordedBy: req.user._id,
+      });
+
+      createdPayments.push(newPmt);
+      allocationRecords.push({
+        studentId,
+        paymentId: newPmt._id,
+        allocatedAmount: pmtNow,
+      });
+    }
+
+    // Determine academic year from first allocation
+    const academicYear = allocations[0]?.academicYear || '';
+
+    // Create the umbrella FamilyPayment record
+    const receiptGroupNo = await generateFamilyReceiptNo(FamilyPayment);
+    const familyPaymentDoc = await FamilyPayment.create({
+      receiptGroupNo,
+      familyGroupId: familyGroupId || null,
+      academicYear,
+      totalPaid: pmtNowTotal,
+      paymentDate: paymentDate ? new Date(paymentDate) : new Date(),
+      paymentMethod,
+      referenceNumber,
+      note,
+      allocations: allocationRecords,
+      recordedBy: req.user._id,
+    });
+
+    res.status(201).json({
+      message: `Family payment recorded for ${createdPayments.length} student(s)`,
+      familyPayment: familyPaymentDoc,
+      payments: createdPayments,
+    });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+};
+
+exports.getFamilyPayment = async (req, res) => {
+  try {
+    const fp = await FamilyPayment.findById(req.params.id)
+      .populate('familyGroupId', 'familyName')
+      .populate('recordedBy', 'name')
+      .populate('allocations.studentId', 'name studentId');
+    if (!fp) return res.status(404).json({ message: 'Family payment not found' });
+    res.json(fp);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

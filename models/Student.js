@@ -30,6 +30,7 @@ const studentSchema = new mongoose.Schema(
     admissionFee: { type: Number, default: 0 },
     status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
     hasAccount: { type: Boolean, default: false },
+    familyGroupId: { type: mongoose.Schema.Types.ObjectId, ref: 'FamilyGroup', default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

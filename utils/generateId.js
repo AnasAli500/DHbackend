@@ -41,4 +41,9 @@ const generateReceiptNo = async (Payment) => {
   return `REC${String(count + 1).padStart(5, "0")}`;
 };
 
-module.exports = { generateStudentId, generateTeacherId, generateReceiptNo };
+const generateFamilyReceiptNo = async (FamilyPayment) => {
+  const count = await FamilyPayment.countDocuments();
+  return `FP${String(count + 1).padStart(5, '0')}`;
+};
+
+module.exports = { generateStudentId, generateTeacherId, generateReceiptNo, generateFamilyReceiptNo };
