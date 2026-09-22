@@ -54,6 +54,7 @@ router.get('/family-groups/:id', getFamilyGroup);
 router.put('/family-groups/:id', updateFamilyGroup);
 router.delete('/family-groups/:id', deleteFamilyGroup);
 router.post('/family-groups/link', linkStudentsAsFamily);
+router.post('/family-groups/unlink', unlinkStudentFromFamily);
 router.delete('/students/:studentId/unlink-family', unlinkStudentFromFamily);
 router.get('/students/:studentId/family', getStudentFamily);
 router.get('/students/search-for-family', searchStudentsForFamily);

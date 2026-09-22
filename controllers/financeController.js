@@ -1101,12 +1101,14 @@ exports.deleteFamilyGroup = async (req, res) => {
 // Link two or more students into a family group
 exports.linkStudentsAsFamily = async (req, res) => {
   try {
-    const { studentIdA, studentIdB, familyName } = req.body;
+    const studentIdA = req.body.studentIdA || req.body.studentId1;
+    const studentIdB = req.body.studentIdB || req.body.studentId2;
+    const familyName = req.body.familyName;
 
     if (!studentIdA || !studentIdB) {
       return res.status(400).json({ message: 'Both studentIdA and studentIdB are required' });
     }
-    if (studentIdA === studentIdB) {
+    if (studentIdA.toString() === studentIdB.toString()) {
       return res.status(400).json({ message: 'Cannot link a student to themselves' });
     }
 
@@ -1131,7 +1133,7 @@ exports.linkStudentsAsFamily = async (req, res) => {
     if (studentA.familyGroupId) {
       // A already has a group — add B to it
       group = await FamilyGroup.findById(studentA.familyGroupId);
-      if (!group.students.map(s => s.toString()).includes(studentIdB)) {
+      if (!group.students.map(s => s.toString()).includes(studentIdB.toString())) {
         group.students.push(studentIdB);
         group.updatedBy = req.user._id;
         await group.save();
@@ -1144,7 +1146,7 @@ exports.linkStudentsAsFamily = async (req, res) => {
     } else if (studentB.familyGroupId) {
       // B already has a group — add A to it
       group = await FamilyGroup.findById(studentB.familyGroupId);
-      if (!group.students.map(s => s.toString()).includes(studentIdA)) {
+      if (!group.students.map(s => s.toString()).includes(studentIdA.toString())) {
         group.students.push(studentIdA);
         group.updatedBy = req.user._id;
         await group.save();
@@ -1173,7 +1175,9 @@ exports.linkStudentsAsFamily = async (req, res) => {
 // Remove a student from their family group
 exports.unlinkStudentFromFamily = async (req, res) => {
   try {
-    const { studentId } = req.params;
+    const studentId = req.params.studentId || req.body.studentId;
+
+    if (!studentId) return res.status(400).json({ message: 'Student ID is required' });
 
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ message: 'Student not found' });
@@ -1181,7 +1185,7 @@ exports.unlinkStudentFromFamily = async (req, res) => {
 
     const group = await FamilyGroup.findById(student.familyGroupId);
     if (group) {
-      group.students = group.students.filter(s => s.toString() !== studentId);
+      group.students = group.students.filter(s => s.toString() !== studentId.toString());
       if (group.students.length === 0) {
         // Delete the group if no students remain
         await group.deleteOne();
