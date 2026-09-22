@@ -130,13 +130,13 @@ exports.getSummary = async (req, res) => {
 
     let feeQuery = { status: 'Active' };
     if (academicYear) feeQuery.academicYear = academicYear;
-    if (classId) feeQuery.classId = classId;
+    if (classId && classId !== 'All') feeQuery.classId = classId;
     if (feeId) feeQuery._id = feeId;
 
     let feeStructures = await FeeStructure.find(feeQuery);
 
     let studentQuery = { status: { $ne: 'Inactive' } };
-    if (classId) {
+    if (classId && classId !== 'All') {
       const enrolledStudentIds = await Enrollment.distinct('studentId', { classId, status: { $ne: 'Inactive' } });
       studentQuery.$or = [
         { classId },
@@ -245,7 +245,7 @@ exports.getFees = async (req, res) => {
     const { academicYear, classId, status } = req.query;
     const query = {};
     if (academicYear) query.academicYear = academicYear;
-    if (classId) query.classId = classId;
+    if (classId && classId !== 'All') query.classId = classId;
     if (status) query.status = status;
 
     const fees = await FeeStructure.find(query)
@@ -352,15 +352,26 @@ exports.getStudentBalances = async (req, res) => {
     const bMonth = isMonthly ? (billingMonth || 'January') : null;
 
     // Find active student IDs from both direct Student.classId and active Enrollments
-    const enrolledStudentIds = await Enrollment.distinct('studentId', { classId, status: { $ne: 'Inactive' } });
+    let studentQuery = { status: { $ne: 'Inactive' } };
 
-    let studentQuery = {
-      $or: [
+    if (classId && classId !== 'All') {
+      const enrolledStudentIds = await Enrollment.distinct('studentId', { classId, status: { $ne: 'Inactive' } });
+      studentQuery.$or = [
         { classId },
         { _id: { $in: enrolledStudentIds } },
-      ],
-      status: { $ne: 'Inactive' },
-    };
+      ];
+    } else {
+      const targetYear = academicYear || feeStructure.academicYear;
+      if (targetYear) {
+        const classesForYear = await Class.find({ academicYear: targetYear }).select('_id');
+        const classIds = classesForYear.map((c) => c._id);
+        const enrolledStudentIds = await Enrollment.distinct('studentId', { classId: { $in: classIds }, status: { $ne: 'Inactive' } });
+        studentQuery.$or = [
+          { classId: { $in: classIds } },
+          { _id: { $in: enrolledStudentIds } },
+        ];
+      }
+    }
 
     if (search) {
       studentQuery.$and = [
@@ -373,7 +384,7 @@ exports.getStudentBalances = async (req, res) => {
       ];
     }
 
-    const students = await Student.find(studentQuery).sort({ name: 1 });
+    const students = await Student.find(studentQuery).populate('classId', 'className gradeLevel').sort({ name: 1 });
 
     const results = [];
     let sumOriginal = 0;
@@ -504,7 +515,7 @@ exports.getPayments = async (req, res) => {
     const query = {};
 
     if (status && status !== 'All') query.status = status;
-    if (classId) query.classId = classId;
+    if (classId && classId !== 'All') query.classId = classId;
     if (studentId) query.studentId = studentId;
     if (feeId) query.feeId = feeId;
     if (academicYear) query.academicYear = academicYear;
