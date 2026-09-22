@@ -52,21 +52,46 @@ const calculateStatus = (amountRequired, totalPaid, dueDate, billingMonth, billi
 // Helper: get effective discount for a student, checking StudentFinanceProfile first
 // Returns { financeStatus, discountType, discountValue, discountAmount, isFree }
 const getEffectiveDiscount = async (studentId, feeAmount, feeStructureId, bYear, bMonth) => {
-  // 1. Check persistent StudentFinanceProfile
+  // 1. Check persistent StudentFinanceProfile first as source of truth
   const profile = await StudentFinanceProfile.findOne({ studentId });
 
-  if (profile && profile.financeStatus === 'free') {
-    return {
-      financeStatus: 'free',
-      discountType: 'Percentage',
-      discountValue: 100,
-      discountAmount: feeAmount,
-      isFree: true,
-      profileExists: true,
-    };
+  if (profile) {
+    if (profile.financeStatus === 'free') {
+      return {
+        financeStatus: 'free',
+        discountType: 'Percentage',
+        discountValue: 100,
+        discountAmount: feeAmount,
+        isFree: true,
+        profileExists: true,
+      };
+    }
+
+    if (profile.financeStatus === 'normal' || Number(profile.discountValue) === 0) {
+      return {
+        financeStatus: 'normal',
+        discountType: 'Fixed',
+        discountValue: 0,
+        discountAmount: 0,
+        isFree: false,
+        profileExists: true,
+      };
+    }
+
+    if (profile.financeStatus === 'discounted' && profile.discountValue > 0) {
+      const discountAmount = calculateDiscount(feeAmount, profile.discountType, profile.discountValue);
+      return {
+        financeStatus: 'discounted',
+        discountType: profile.discountType,
+        discountValue: profile.discountValue,
+        discountAmount,
+        isFree: false,
+        profileExists: true,
+      };
+    }
   }
 
-  // 2. Check per-period StudentBalance override (backward compat)
+  // 2. Fall back to per-period StudentBalance override if no profile exists
   const balanceRecord = await StudentBalance.findOne({
     studentId,
     feeStructureId,
@@ -74,39 +99,26 @@ const getEffectiveDiscount = async (studentId, feeAmount, feeStructureId, bYear,
     ...(bMonth != null ? { billingMonth: bMonth } : {}),
   });
 
-  if (balanceRecord && (balanceRecord.discountValue > 0)) {
+  if (balanceRecord && balanceRecord.discountValue > 0) {
     const discountAmount = calculateDiscount(feeAmount, balanceRecord.discountType, balanceRecord.discountValue);
     return {
-      financeStatus: profile?.financeStatus || 'discounted',
+      financeStatus: 'discounted',
       discountType: balanceRecord.discountType,
       discountValue: balanceRecord.discountValue,
       discountAmount,
       isFree: false,
-      profileExists: !!profile,
+      profileExists: false,
     };
   }
 
-  // 3. Fall back to profile discount (if profile has discounted status)
-  if (profile && profile.financeStatus === 'discounted' && profile.discountValue > 0) {
-    const discountAmount = calculateDiscount(feeAmount, profile.discountType, profile.discountValue);
-    return {
-      financeStatus: 'discounted',
-      discountType: profile.discountType,
-      discountValue: profile.discountValue,
-      discountAmount,
-      isFree: false,
-      profileExists: true,
-    };
-  }
-
-  // 4. No discount
+  // 3. Default: No discount
   return {
-    financeStatus: profile?.financeStatus || 'normal',
+    financeStatus: 'normal',
     discountType: 'Fixed',
     discountValue: 0,
     discountAmount: 0,
     isFree: false,
-    profileExists: !!profile,
+    profileExists: false,
   };
 };
 
@@ -181,17 +193,17 @@ exports.getSummary = async (req, res) => {
         const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
         const bMonth = isMonthly ? (billingMonth || 'January') : null;
 
-        // Fetch discount settings
-        const discountRecord = await StudentBalance.findOne({
-          studentId: student._id,
-          feeStructureId: fee._id,
-          ...(isMonthly ? { billingYear: bYear, billingMonth: bMonth } : {}),
-        });
+        // Fetch effective discount using unified helper
+        const effectiveDiscount = await getEffectiveDiscount(
+          student._id,
+          fee.amount,
+          fee._id,
+          isMonthly ? bYear : null,
+          isMonthly ? bMonth : null
+        );
 
-        const discType = discountRecord ? discountRecord.discountType : 'Fixed';
-        const discValue = discountRecord ? discountRecord.discountValue : 0;
-        const discAmount = calculateDiscount(fee.amount, discType, discValue);
-        const required = Math.max(0, fee.amount - discAmount);
+        const discAmount = effectiveDiscount.discountAmount;
+        const required = effectiveDiscount.isFree ? 0 : Math.max(0, fee.amount - discAmount);
 
         // Fetch payments
         const pmtMatch = {
@@ -956,6 +968,36 @@ exports.getStudentFinanceProfile = async (req, res) => {
   }
 };
 
+// Helper: Sync all StudentBalance records for a student when their profile changes
+const syncStudentBalancesWithProfile = async (studentId, profile) => {
+  const isNormal = !profile || profile.financeStatus === 'normal' || Number(profile.discountValue) === 0;
+  const isFree = profile && profile.financeStatus === 'free';
+  const discType = profile?.discountType || 'Fixed';
+  const discVal = Number(profile?.discountValue) || 0;
+
+  const balances = await StudentBalance.find({ studentId });
+  for (const bal of balances) {
+    const fee = await FeeStructure.findById(bal.feeStructureId);
+    if (!fee) continue;
+
+    let discAmt = 0;
+    if (isFree) {
+      discAmt = fee.amount;
+    } else if (isNormal) {
+      discAmt = 0;
+    } else {
+      discAmt = calculateDiscount(fee.amount, discType, discVal);
+    }
+
+    const req = isFree ? 0 : Math.max(0, fee.amount - discAmt);
+    bal.discountType = isNormal ? 'Fixed' : discType;
+    bal.discountValue = isNormal ? 0 : discVal;
+    bal.discountAmount = discAmt;
+    bal.amountRequired = req;
+    await bal.save();
+  }
+};
+
 exports.upsertStudentFinanceProfile = async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -964,11 +1006,14 @@ exports.upsertStudentFinanceProfile = async (req, res) => {
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ message: 'Student not found' });
 
+    const finalStatus = (financeStatus === 'normal' || Number(discountValue) === 0) ? 'normal' : (financeStatus || 'normal');
+    const finalVal = finalStatus === 'normal' ? 0 : (Number(discountValue) || 0);
+
     // Build the history entry
     const historyEntry = {
-      financeStatus: financeStatus || 'normal',
+      financeStatus: finalStatus,
       discountType: discountType || 'Fixed',
-      discountValue: Number(discountValue) || 0,
+      discountValue: finalVal,
       note: note || '',
       changedBy: req.user._id,
       changedAt: new Date(),
@@ -977,9 +1022,9 @@ exports.upsertStudentFinanceProfile = async (req, res) => {
     const profile = await StudentFinanceProfile.findOneAndUpdate(
       { studentId },
       {
-        financeStatus: financeStatus || 'normal',
+        financeStatus: finalStatus,
         discountType: discountType || 'Fixed',
-        discountValue: Number(discountValue) || 0,
+        discountValue: finalVal,
         updatedBy: req.user._id,
         $push: { discountHistory: { $each: [historyEntry], $position: 0 } },
       },
@@ -987,6 +1032,9 @@ exports.upsertStudentFinanceProfile = async (req, res) => {
     )
       .populate('updatedBy', 'name')
       .populate('discountHistory.changedBy', 'name');
+
+    // Sync all existing StudentBalance entries for this student
+    await syncStudentBalancesWithProfile(studentId, profile);
 
     res.json(profile);
   } catch (err) {
@@ -1018,6 +1066,9 @@ exports.removeStudentDiscount = async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // Sync all existing StudentBalance entries for this student
+    await syncStudentBalancesWithProfile(studentId, profile);
 
     res.json({ message: 'Discount removed successfully', profile });
   } catch (err) {
