@@ -1398,6 +1398,30 @@ exports.createFamilyPayment = async (req, res) => {
       const bYear = isMonthly ? (Number(billingYear) || new Date().getFullYear()) : null;
       const bMonth = isMonthly ? (billingMonth || null) : null;
 
+      // Check if explicit discount or free status was passed for this student in the family payment request
+      const reqDiscType = item.discountType;
+      const reqDiscValue = item.discountValue !== undefined ? Number(item.discountValue) : undefined;
+      const isExplicitFree = item.isFree === true || item.financeStatus === 'free';
+
+      if (isExplicitFree) {
+        await StudentFinanceProfile.findOneAndUpdate(
+          { studentId },
+          { financeStatus: 'free', updatedBy: req.user._id },
+          { upsert: true }
+        );
+      } else if (reqDiscType !== undefined && reqDiscValue !== undefined) {
+        await StudentFinanceProfile.findOneAndUpdate(
+          { studentId },
+          {
+            financeStatus: reqDiscValue > 0 ? 'discounted' : 'normal',
+            discountType: reqDiscType,
+            discountValue: reqDiscValue,
+            updatedBy: req.user._id
+          },
+          { upsert: true }
+        );
+      }
+
       const effectiveDiscount = await getEffectiveDiscount(student._id, fee.amount, fee._id, bYear, bMonth);
       const amountRequired = effectiveDiscount.isFree ? 0 : Math.max(0, fee.amount - effectiveDiscount.discountAmount);
 
