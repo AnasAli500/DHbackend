@@ -42,13 +42,18 @@ exports.getStudents = async (req, res) => {
       populate: { path: 'category', select: 'name code academicType' },
     })
     .populate('createdBy', 'name')
-    .sort({ createdAt: -1 });
+    .collation({ locale: 'en', strength: 2 })
+    .sort({ name: 1 });
 
   if (parsedLimit > 0) {
     queryExec = queryExec.skip((parsedPage - 1) * parsedLimit).limit(parsedLimit);
   }
 
   const students = await queryExec;
+
+  // Sort students case-insensitively A to Z by full name
+  students.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
+
   const pages = parsedLimit > 0 ? (Math.ceil(total / parsedLimit) || 1) : 1;
 
   res.json({ students, total, page: parsedPage, pages });
@@ -205,7 +210,12 @@ exports.deleteStudent = async (req, res) => {
 };
 
 exports.exportStudents = async (req, res) => {
-  const students = await Student.find().populate('classId', 'className gradeLevel');
+  const students = await Student.find()
+    .populate('classId', 'className gradeLevel')
+    .collation({ locale: 'en', strength: 2 })
+    .sort({ name: 1 });
+
+  students.sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true }));
   res.json(students);
 };
 
