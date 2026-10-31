@@ -1,76 +1,72 @@
 const Subject = require('../models/Subject');
 const Period = require('../models/Period');
-const Teacher = require('../models/Teacher');
 
-// Helper to seed subjects if none exist in the database
-const ensureInitialSubjects = async () => {
+// ─── Fixed subject list ────────────────────────────────────────────────────────
+// Shared (appear in both Primary and Secondary) → level: 'Both'
+// Primary only                                  → level: 'Primary'
+// Secondary only                                → level: 'Secondary'
+const FIXED_SUBJECTS = [
+  // ── Shared (Both levels) ──────────────────────────────
+  { name: 'Somali',      code: 'SOM',  level: 'Both' },
+  { name: 'Islamic',     code: 'ISLM', level: 'Both' },
+  { name: 'Arabic',      code: 'ARAB', level: 'Both' },
+  { name: 'English',     code: 'ENG',  level: 'Both' },
+
+  // ── Primary only ──────────────────────────────────────
+  { name: 'Xisaab',     code: 'XIS',  level: 'Primary' },
+  { name: 'Saynis',     code: 'SAY',  level: 'Primary' },
+  { name: 'CB',         code: 'CB',   level: 'Primary' },
+  { name: 'Technology', code: 'TECH', level: 'Primary' },
+
+  // ── Secondary only ────────────────────────────────────
+  { name: 'Mathematics', code: 'MATH', level: 'Secondary' },
+  { name: 'Physics',     code: 'PHY',  level: 'Secondary' },
+  { name: 'Chemistry',   code: 'CHEM', level: 'Secondary' },
+  { name: 'Biology',     code: 'BIO',  level: 'Secondary' },
+  { name: 'Geography',   code: 'GEO',  level: 'Secondary' },
+  { name: 'History',     code: 'HIST', level: 'Secondary' },
+  { name: 'Physical',    code: 'PHYS', level: 'Secondary' },
+  { name: 'Business',    code: 'BUS',  level: 'Secondary' },
+];
+
+// ─── Sync DB to FIXED_SUBJECTS ────────────────────────────────────────────────
+// • Insert missing subjects
+// • Remove any subject NOT in the fixed list (unless it is in use by a period)
+const syncSubjects = async () => {
   try {
-    const count = await Subject.countDocuments();
-    if (count === 0) {
-      // Find any distinct subjects from Period collection
-      const periodSubjects = await Period.distinct('subject');
-      const teacherSubjects = await Teacher.distinct('subject');
-
-      const rawList = [...periodSubjects, ...teacherSubjects];
-      const normalizedSet = new Set();
-
-      rawList.forEach((sub) => {
-        if (!sub) return;
-        // Split composite subjects like "Math / phy" or "Tarabiyo/Carabi" if needed, or clean up
-        const parts = sub.includes('/') ? sub.split('/') : [sub];
-        parts.forEach((p) => {
-          const trimmed = p.trim();
-          if (trimmed.length > 1) {
-            normalizedSet.add(trimmed.charAt(0).toUpperCase() + trimmed.slice(1));
-          }
-        });
+    // 1. Upsert every fixed subject
+    for (const sub of FIXED_SUBJECTS) {
+      const exists = await Subject.findOne({
+        name: { $regex: `^${sub.name}$`, $options: 'i' },
       });
+      if (!exists) {
+        await Subject.create({ ...sub, status: 'Active' }).catch(() => {});
+      } else if (exists.level !== sub.level) {
+        // Correct the level if it was wrong
+        await Subject.updateOne({ _id: exists._id }, { level: sub.level });
+      }
+    }
 
-      // Default subjects with level tags
-      const defaultSubjects = [
-        // Secondary subjects
-        { name: 'Mathematics',  code: 'MATH', level: 'Secondary' },
-        { name: 'English',      code: 'ENG',  level: 'Secondary' },
-        { name: 'Arabic',       code: 'ARAB', level: 'Secondary' },
-        { name: 'Somali',       code: 'SOM',  level: 'Secondary' },
-        { name: 'Islamic',      code: 'ISLM', level: 'Secondary' },
-        { name: 'Physics',      code: 'PHY',  level: 'Secondary' },
-        { name: 'Chemistry',    code: 'CHEM', level: 'Secondary' },
-        { name: 'Biology',      code: 'BIO',  level: 'Secondary' },
-        { name: 'Geography',    code: 'GEO',  level: 'Secondary' },
-        { name: 'History',      code: 'HIST', level: 'Secondary' },
-        { name: 'Business',     code: 'BUS',  level: 'Secondary' },
-        // Primary subjects
-        { name: 'Xisaab',       code: 'XIS',  level: 'Primary' },
-        { name: 'Saynis',       code: 'SAY',  level: 'Primary' },
-        { name: 'CB',           code: 'CB',   level: 'Primary' },
-        { name: 'Technology',   code: 'TECH', level: 'Primary' },
-      ];
-
-      // Merge normalised period subjects as 'Both'
-      const docsToInsert = [
-        ...defaultSubjects,
-        ...Array.from(normalizedSet)
-          .filter((name) => !defaultSubjects.some((d) => d.name.toLowerCase() === name.toLowerCase()))
-          .map((name) => ({
-            name,
-            code: name.slice(0, 4).toUpperCase(),
-            status: 'Active',
-            level: 'Both',
-          })),
-      ].map((d) => ({ ...d, status: 'Active' }));
-
-      await Subject.insertMany(docsToInsert, { ordered: false }).catch(() => {});
-
+    // 2. Delete any subject that is NOT in the fixed list and not in use
+    const fixedNames = FIXED_SUBJECTS.map((s) => s.name.toLowerCase());
+    const allSubjects = await Subject.find({});
+    for (const sub of allSubjects) {
+      if (!fixedNames.includes(sub.name.toLowerCase())) {
+        const inUse = await Period.exists({ subject: sub.name });
+        if (!inUse) {
+          await sub.deleteOne();
+        }
+      }
     }
   } catch (err) {
-    console.error('Error ensuring initial subjects:', err.message);
+    console.error('Error syncing subjects:', err.message);
   }
 };
 
+// ─── GET /subjects ─────────────────────────────────────────────────────────────
 exports.getSubjects = async (req, res, next) => {
   try {
-    await ensureInitialSubjects();
+    await syncSubjects();
 
     const { search, status, level } = req.query;
     const query = {};
@@ -80,37 +76,14 @@ exports.getSubjects = async (req, res, next) => {
       query.$or = [{ level }, { level: 'Both' }];
     }
 
-    let subjects = await Subject.find(query).sort({ name: 1 });
-
-    // Also include any new distinct subjects from periods that might not be in Subject collection
-    const periodSubjects = await Period.distinct('subject');
-    const existingNames = new Set(subjects.map((s) => s.name.toLowerCase()));
-
-    for (const pSub of periodSubjects) {
-      if (pSub && pSub.trim() && !existingNames.has(pSub.trim().toLowerCase())) {
-        try {
-          const created = await Subject.create({
-            name: pSub.trim(),
-            code: pSub.trim().slice(0, 4).toUpperCase(),
-            status: 'Active',
-            level: 'Both',
-          });
-          subjects.push(created);
-          existingNames.add(created.name.toLowerCase());
-        } catch {
-          // ignore duplicate race condition
-        }
-      }
-    }
-
-    subjects.sort((a, b) => a.name.localeCompare(b.name));
+    const subjects = await Subject.find(query).sort({ name: 1 });
     res.json({ subjects });
   } catch (error) {
     next(error);
   }
 };
 
-
+// ─── POST /subjects ────────────────────────────────────────────────────────────
 exports.createSubject = async (req, res, next) => {
   try {
     const { name, code, description, level } = req.body;
@@ -142,15 +115,17 @@ exports.createSubject = async (req, res, next) => {
   }
 };
 
+// ─── DELETE /subjects/:id ──────────────────────────────────────────────────────
 exports.deleteSubject = async (req, res, next) => {
   try {
     const subject = await Subject.findById(req.params.id);
     if (!subject) return res.status(404).json({ message: 'Subject not found' });
 
-    // Check if any period is using this subject
     const periodInUse = await Period.exists({ subject: subject.name });
     if (periodInUse) {
-      return res.status(400).json({ message: 'Cannot delete subject that is assigned to active classes/periods' });
+      return res.status(400).json({
+        message: 'Cannot delete subject that is assigned to active classes/periods',
+      });
     }
 
     await subject.deleteOne();
