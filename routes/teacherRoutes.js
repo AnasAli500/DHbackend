@@ -6,12 +6,14 @@ const {
   updateTeacher,
   deleteTeacher,
 } = require('../controllers/teacherController');
+const { getSubjects } = require('../controllers/subjectController');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
 router.use(protect);
 
+router.get('/subjects', authorize('admin', 'teacher'), getSubjects);
 router.get('/', authorize('admin'), getTeachers);
 router.get('/:id', authorize('admin'), getTeacher);
 router.post('/', authorize('admin'), createTeacher);

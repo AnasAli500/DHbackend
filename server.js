@@ -74,6 +74,7 @@ app.use("/api/auth", require("./routes/authRoutes"));
 app.use("/api/users", require("./routes/userRoutes"));
 app.use("/api/students", require("./routes/studentRoutes"));
 app.use("/api/teachers", require("./routes/teacherRoutes"));
+app.use("/api/subjects", require("./routes/subjectRoutes"));
 app.use("/api/classes", require("./routes/classRoutes"));
 app.use("/api/categories", require("./routes/categoryRoutes"));
 app.use("/api/periods", require("./routes/periodRoutes"));
