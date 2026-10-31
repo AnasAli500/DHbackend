@@ -1,24 +1,21 @@
 const Subject = require('../models/Subject');
 const Period = require('../models/Period');
 
-// ─── Fixed subject list ────────────────────────────────────────────────────────
-// Shared (appear in both Primary and Secondary) → level: 'Both'
-// Primary only                                  → level: 'Primary'
-// Secondary only                                → level: 'Secondary'
+// ─── STRICT fixed subject list ─────────────────────────────────────────────────
 const FIXED_SUBJECTS = [
-  // ── Shared (Both levels) ──────────────────────────────
+  // Shared — appear under BOTH Primary and Secondary filters
   { name: 'Somali',      code: 'SOM',  level: 'Both' },
   { name: 'Islamic',     code: 'ISLM', level: 'Both' },
   { name: 'Arabic',      code: 'ARAB', level: 'Both' },
   { name: 'English',     code: 'ENG',  level: 'Both' },
 
-  // ── Primary only ──────────────────────────────────────
+  // Primary only
   { name: 'Xisaab',     code: 'XIS',  level: 'Primary' },
   { name: 'Saynis',     code: 'SAY',  level: 'Primary' },
   { name: 'CB',         code: 'CB',   level: 'Primary' },
   { name: 'Technology', code: 'TECH', level: 'Primary' },
 
-  // ── Secondary only ────────────────────────────────────
+  // Secondary only
   { name: 'Mathematics', code: 'MATH', level: 'Secondary' },
   { name: 'Physics',     code: 'PHY',  level: 'Secondary' },
   { name: 'Chemistry',   code: 'CHEM', level: 'Secondary' },
@@ -29,35 +26,31 @@ const FIXED_SUBJECTS = [
   { name: 'Business',    code: 'BUS',  level: 'Secondary' },
 ];
 
-// ─── Sync DB to FIXED_SUBJECTS ────────────────────────────────────────────────
-// • Insert missing subjects
-// • Remove any subject NOT in the fixed list (unless it is in use by a period)
+const FIXED_NAMES = FIXED_SUBJECTS.map((s) => s.name.toLowerCase());
+
+// ─── Sync: upsert fixed subjects, delete everything else ──────────────────────
 const syncSubjects = async () => {
   try {
-    // 1. Upsert every fixed subject
+    // 1. Upsert each fixed subject
     for (const sub of FIXED_SUBJECTS) {
       const exists = await Subject.findOne({
         name: { $regex: `^${sub.name}$`, $options: 'i' },
       });
       if (!exists) {
         await Subject.create({ ...sub, status: 'Active' }).catch(() => {});
-      } else if (exists.level !== sub.level) {
-        // Correct the level if it was wrong
-        await Subject.updateOne({ _id: exists._id }, { level: sub.level });
+      } else {
+        // Always correct the level & status
+        await Subject.updateOne(
+          { _id: exists._id },
+          { level: sub.level, status: 'Active', name: sub.name }
+        );
       }
     }
 
-    // 2. Delete any subject that is NOT in the fixed list and not in use
-    const fixedNames = FIXED_SUBJECTS.map((s) => s.name.toLowerCase());
-    const allSubjects = await Subject.find({});
-    for (const sub of allSubjects) {
-      if (!fixedNames.includes(sub.name.toLowerCase())) {
-        const inUse = await Period.exists({ subject: sub.name });
-        if (!inUse) {
-          await sub.deleteOne();
-        }
-      }
-    }
+    // 2. Force-delete EVERY subject not in the fixed list
+    await Subject.deleteMany({
+      name: { $nin: FIXED_SUBJECTS.map((s) => s.name) },
+    });
   } catch (err) {
     console.error('Error syncing subjects:', err.message);
   }
@@ -68,16 +61,28 @@ exports.getSubjects = async (req, res, next) => {
   try {
     await syncSubjects();
 
-    const { search, status, level } = req.query;
-    const query = {};
-    if (status) query.status = status;
-    if (search) query.name = { $regex: search, $options: 'i' };
-    if (level && level !== 'All') {
-      query.$or = [{ level }, { level: 'Both' }];
+    const { search, level } = req.query;
+
+    // Start from the fixed list (order preserved)
+    let subjects = FIXED_SUBJECTS.map((s) => ({ ...s, status: 'Active' }));
+
+    // Apply search filter
+    if (search) {
+      const re = new RegExp(search, 'i');
+      subjects = subjects.filter((s) => re.test(s.name));
     }
 
-    const subjects = await Subject.find(query).sort({ name: 1 });
-    res.json({ subjects });
+    // Apply level filter
+    if (level && level !== 'All') {
+      subjects = subjects.filter((s) => s.level === level || s.level === 'Both');
+    }
+
+    // Fetch real DB docs so _id is included (needed for subject selection)
+    const dbDocs = await Subject.find({
+      name: { $in: subjects.map((s) => s.name) },
+    }).sort({ name: 1 });
+
+    res.json({ subjects: dbDocs });
   } catch (error) {
     next(error);
   }
