@@ -240,7 +240,15 @@ exports.createTeacher = async (req, res, next) => {
     const uniqueSubjects = [...new Set(cleanedAssignments.map((a) => a.subject))];
     const joinedSubject = uniqueSubjects.length > 0 ? uniqueSubjects.join(', ') : (req.body.subject || '');
 
-    const teacherId = await generateTeacherId(Teacher);
+    let teacherId = req.body.teacherId;
+    if (!teacherId) {
+      try {
+        teacherId = await generateTeacherId(Teacher);
+      } catch {
+        const count = await Teacher.countDocuments();
+        teacherId = `TCH${String(count + 1).padStart(5, '0')}`;
+      }
+    }
 
     const teacher = new Teacher({
       teacherId,
@@ -282,6 +290,19 @@ exports.updateTeacher = async (req, res, next) => {
     if (!teacher) return res.status(404).json({ message: 'Teacher not found' });
 
     const { name, gender, phone, email, address, assignments } = req.body;
+
+    if (!teacher.teacherId) {
+      if (req.body.teacherId) {
+        teacher.teacherId = req.body.teacherId;
+      } else {
+        try {
+          teacher.teacherId = await generateTeacherId(Teacher);
+        } catch {
+          const count = await Teacher.countDocuments();
+          teacher.teacherId = `TCH${String(count + 1).padStart(5, '0')}`;
+        }
+      }
+    }
 
     if (name !== undefined) {
       if (!name || !name.trim()) {

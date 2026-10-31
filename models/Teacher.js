@@ -26,4 +26,16 @@ const teacherSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+teacherSchema.pre("validate", async function () {
+  if (!this.teacherId) {
+    try {
+      const { generateTeacherId } = require("../utils/generateId");
+      this.teacherId = await generateTeacherId(mongoose.model("Teacher"));
+    } catch {
+      const count = await mongoose.model("Teacher").countDocuments();
+      this.teacherId = `TCH${String(count + 1).padStart(5, "0")}`;
+    }
+  }
+});
+
 module.exports = mongoose.model("Teacher", teacherSchema);
