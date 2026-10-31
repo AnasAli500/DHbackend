@@ -4,6 +4,8 @@ const Student = require('../models/Student');
 const Enrollment = require('../models/Enrollment');
 const Exam = require('../models/Exam');
 const Attendance = require('../models/Attendance');
+const Teacher = require('../models/Teacher');
+const Period = require('../models/Period');
 const { ensureFixedCategories } = require('./categoryController');
 
 exports.getClasses = async (req, res) => {
@@ -17,6 +19,23 @@ exports.getClasses = async (req, res) => {
       { className: { $regex: search, $options: 'i' } },
       { gradeLevel: { $regex: search, $options: 'i' } },
     ];
+  }
+
+  // Teachers only see classes they are assigned to (via Period or classTeacher)
+  if (req.user && req.user.role === 'teacher') {
+    const teacher = await Teacher.findOne({ teacherId: req.user.teacherId });
+    if (!teacher) {
+      return res.json({ classes: [], total: 0, page: Number(page), pages: 0 });
+    }
+    const periodClassIds = await Period.distinct('classId', { teacherId: teacher._id });
+    const classTeacherClassIds = await Class.distinct('_id', { classTeacher: teacher._id });
+    const combinedIds = [
+      ...new Set([
+        ...periodClassIds.map((id) => id.toString()),
+        ...classTeacherClassIds.map((id) => id.toString()),
+      ]),
+    ];
+    query._id = { $in: combinedIds };
   }
 
   await ensureFixedCategories();
