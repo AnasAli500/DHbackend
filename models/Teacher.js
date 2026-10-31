@@ -10,7 +10,7 @@ const teacherAssignmentSchema = new mongoose.Schema(
 
 const teacherSchema = new mongoose.Schema(
   {
-    teacherId: { type: String, required: true, unique: true },
+    teacherId: { type: String, required: true, unique: true, sparse: true },
     name: { type: String, required: true, trim: true },
     gender: { type: String, enum: ["Male", "Female"], required: true },
     phone: { type: String, trim: true, default: "" },

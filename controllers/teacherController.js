@@ -118,8 +118,7 @@ const syncTeacherPeriods = async (teacher, assignments, userId) => {
         await p.deleteOne();
       } else {
         // Disassociate teacher without destroying exam/attendance history
-        p.teacherId = null;
-        await p.save();
+        await Period.updateOne({ _id: p._id }, { $unset: { teacherId: 1 } });
       }
     }
   }
