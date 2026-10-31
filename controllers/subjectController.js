@@ -13,7 +13,7 @@ const FIXED_SUBJECTS = [
   { name: 'Xisaab',     code: 'XIS',  level: 'Primary' },
   { name: 'Saynis',     code: 'SAY',  level: 'Primary' },
   { name: 'CB',         code: 'CB',   level: 'Primary' },
-  { name: 'Technology', code: 'TECH', level: 'Primary' },
+  { name: 'Technology', code: 'TECH', level: 'Both' },
 
   // Secondary only
   { name: 'Mathematics', code: 'MATH', level: 'Secondary' },
@@ -22,7 +22,6 @@ const FIXED_SUBJECTS = [
   { name: 'Biology',     code: 'BIO',  level: 'Secondary' },
   { name: 'Geography',   code: 'GEO',  level: 'Secondary' },
   { name: 'History',     code: 'HIST', level: 'Secondary' },
-  { name: 'Physical',    code: 'PHYS', level: 'Secondary' },
   { name: 'Business',    code: 'BUS',  level: 'Secondary' },
 ];
 
