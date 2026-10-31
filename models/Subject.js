@@ -6,6 +6,7 @@ const subjectSchema = new mongoose.Schema(
     code: { type: String, trim: true },
     description: { type: String, default: '' },
     status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
+    level: { type: String, enum: ['Primary', 'Secondary', 'Both'], default: 'Both' },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   },
   { timestamps: true }

@@ -26,33 +26,42 @@ const ensureInitialSubjects = async () => {
         });
       });
 
-      // Default high school / middle school curriculum subjects if nothing yet
+      // Default subjects with level tags
       const defaultSubjects = [
-        'Arabic',
-        'Biology',
-        'Business',
-        'Chemistry',
-        'English',
-        'Geography',
-        'History',
-        'Islamic Studies',
-        'Mathematics',
-        'Physics',
-        'Science',
-        'Social Studies',
-        'Somali',
-        'Technology',
+        // Secondary subjects
+        { name: 'Mathematics',  code: 'MATH', level: 'Secondary' },
+        { name: 'English',      code: 'ENG',  level: 'Secondary' },
+        { name: 'Arabic',       code: 'ARAB', level: 'Secondary' },
+        { name: 'Somali',       code: 'SOM',  level: 'Secondary' },
+        { name: 'Islamic',      code: 'ISLM', level: 'Secondary' },
+        { name: 'Physics',      code: 'PHY',  level: 'Secondary' },
+        { name: 'Chemistry',    code: 'CHEM', level: 'Secondary' },
+        { name: 'Biology',      code: 'BIO',  level: 'Secondary' },
+        { name: 'Geography',    code: 'GEO',  level: 'Secondary' },
+        { name: 'History',      code: 'HIST', level: 'Secondary' },
+        { name: 'Business',     code: 'BUS',  level: 'Secondary' },
+        // Primary subjects
+        { name: 'Xisaab',       code: 'XIS',  level: 'Primary' },
+        { name: 'Saynis',       code: 'SAY',  level: 'Primary' },
+        { name: 'CB',           code: 'CB',   level: 'Primary' },
+        { name: 'Technology',   code: 'TECH', level: 'Primary' },
       ];
 
-      defaultSubjects.forEach((s) => normalizedSet.add(s));
-
-      const docsToInsert = Array.from(normalizedSet).map((name) => ({
-        name,
-        code: name.slice(0, 4).toUpperCase(),
-        status: 'Active',
-      }));
+      // Merge normalised period subjects as 'Both'
+      const docsToInsert = [
+        ...defaultSubjects,
+        ...Array.from(normalizedSet)
+          .filter((name) => !defaultSubjects.some((d) => d.name.toLowerCase() === name.toLowerCase()))
+          .map((name) => ({
+            name,
+            code: name.slice(0, 4).toUpperCase(),
+            status: 'Active',
+            level: 'Both',
+          })),
+      ].map((d) => ({ ...d, status: 'Active' }));
 
       await Subject.insertMany(docsToInsert, { ordered: false }).catch(() => {});
+
     }
   } catch (err) {
     console.error('Error ensuring initial subjects:', err.message);
@@ -63,10 +72,13 @@ exports.getSubjects = async (req, res, next) => {
   try {
     await ensureInitialSubjects();
 
-    const { search, status } = req.query;
+    const { search, status, level } = req.query;
     const query = {};
     if (status) query.status = status;
     if (search) query.name = { $regex: search, $options: 'i' };
+    if (level && level !== 'All') {
+      query.$or = [{ level }, { level: 'Both' }];
+    }
 
     let subjects = await Subject.find(query).sort({ name: 1 });
 
@@ -81,6 +93,7 @@ exports.getSubjects = async (req, res, next) => {
             name: pSub.trim(),
             code: pSub.trim().slice(0, 4).toUpperCase(),
             status: 'Active',
+            level: 'Both',
           });
           subjects.push(created);
           existingNames.add(created.name.toLowerCase());
@@ -97,9 +110,10 @@ exports.getSubjects = async (req, res, next) => {
   }
 };
 
+
 exports.createSubject = async (req, res, next) => {
   try {
-    const { name, code, description } = req.body;
+    const { name, code, description, level } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Subject name is required' });
     }
@@ -118,6 +132,7 @@ exports.createSubject = async (req, res, next) => {
       code: (code || trimmedName.slice(0, 4)).trim().toUpperCase(),
       description: description || '',
       status: 'Active',
+      level: level || 'Both',
       createdBy: req.user._id,
     });
 
