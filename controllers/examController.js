@@ -92,16 +92,25 @@ exports.getExams = async (req, res) => {
   }
 
   const total = await Exam.countDocuments(query);
-  const exams = await Exam.find(query)
+  const isAll = limit === 'All' || limit === 'all' || Number(limit) === 0;
+  const parsedLimit = isAll ? 0 : Math.max(1, Number(limit) || 100);
+  const parsedPage = Math.max(1, Number(page) || 1);
+
+  let queryExec = Exam.find(query)
     .populate('studentId', 'name studentId')
     .populate('classId', 'className gradeLevel academicYear')
     .populate('periodId', 'periodName subject')
     .populate('teacherId', 'name teacherId')
-    .sort({ examDate: -1 })
-    .skip((page - 1) * limit)
-    .limit(Number(limit));
+    .sort({ examDate: -1 });
 
-  res.json({ exams, total, page: Number(page), pages: Math.ceil(total / limit) });
+  if (parsedLimit > 0) {
+    queryExec = queryExec.skip((parsedPage - 1) * parsedLimit).limit(parsedLimit);
+  }
+
+  const exams = await queryExec;
+  const pages = parsedLimit > 0 ? (Math.ceil(total / parsedLimit) || 1) : 1;
+
+  res.json({ exams, total, page: parsedPage, pages });
 };
 
 exports.getExamSetup = async (req, res) => {

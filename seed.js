@@ -14,8 +14,8 @@ const seed = async () => {
     console.log("Connected to MongoDB");
     await ensureFixedCategories();
 
-    const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "admin@school.com";
-    const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "admin12345";
+    const adminEmail = process.env.DEFAULT_ADMIN_EMAIL || "anas@gmail.com";
+    const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || "anas1122";
 
     const existingAdmin = await User.findOne({ email: adminEmail });
     if (existingAdmin) {
