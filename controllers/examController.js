@@ -365,7 +365,7 @@ exports.bulkSaveExams = async (req, res) => {
     const remarks = record.remarks || '';
 
     let existing = null;
-    if (record.examId) {
+    if (record.examId && mongoose.Types.ObjectId.isValid(record.examId)) {
       existing = await Exam.findById(record.examId);
     }
     if (!existing && examSeasonId && examStructureId) {
@@ -377,33 +377,20 @@ exports.bulkSaveExams = async (req, res) => {
         examStructureId,
       });
     }
-    if (!existing && examSeasonId && examStructureId) {
-      existing = await Exam.findOne({
-        studentId: record.studentId,
-        classId,
-        examSeasonId,
-        examStructureId,
-      });
-    }
-    if (!existing && examSeasonId) {
-      existing = await Exam.findOne({
-        studentId: record.studentId,
-        classId,
-        periodId,
-        examSeasonId,
-      });
-    }
     if (!existing) {
       existing = await Exam.findOne({
         studentId: record.studentId,
         classId,
+        periodId,
         examName,
+        examDate: { $gte: dayStart, $lte: dayEnd },
       });
     }
     if (!existing) {
       existing = await Exam.findOne({
         studentId: record.studentId,
         periodId,
+        examName,
         examDate: { $gte: dayStart, $lte: dayEnd },
       });
     }
@@ -426,6 +413,9 @@ exports.bulkSaveExams = async (req, res) => {
       existing.examPhase = season.name;
       existing.examType = structureResult.structure.examType;
       existing.classId = classId;
+      existing.periodId = periodId;
+      existing.examName = examName;
+      existing.examDate = dayStart;
       if (enrollment) existing.enrollmentId = enrollment._id;
       existing.teacherId = teacherId;
       existing.createdBy = req.user._id;
